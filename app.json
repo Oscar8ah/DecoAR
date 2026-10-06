@@ -20,6 +20,12 @@
     },
     "web": {
       "favicon": "./assets/favicon.png"
-    }
+    },
+    "extra": {
+      "eas": {
+        "projectId": "05d12deb-025d-4001-92e0-9589cf2d1101"
+      }
+    },
+    "owner": "oscar8ah19"
   }
 }
