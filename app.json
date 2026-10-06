@@ -21,6 +21,31 @@
     "web": {
       "favicon": "./assets/favicon.png"
     },
+    "plugins": [
+      [
+        "expo-build-properties",
+        {
+          "ios": {
+            "enableSceneSupport": true,
+            "deploymentTarget": "16.4"
+          }
+        }
+      ],
+      [
+        "@reactvision/react-viro",
+        {
+          "android": {
+            "xRMode": "AR"
+          },
+          "ios": {
+            "cameraUsagePermission": "DecoAR usa la cámara para detectar el piso y las paredes en Realidad Aumentada.",
+            "microphoneUsagePermission": "DecoAR usa el micrófono para capturas de video en AR.",
+            "photosPermission": "DecoAR necesita leer fotos para aplicar texturas personalizadas.",
+            "savePhotosPermission": "DecoAR guarda tus capturas de la vista AR en tu galería."
+          }
+        }
+      ]
+    ],
     "extra": {
       "eas": {
         "projectId": "05d12deb-025d-4001-92e0-9589cf2d1101"
