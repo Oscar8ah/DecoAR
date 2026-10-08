@@ -7,7 +7,15 @@
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "light",
     "ios": {
-      "supportsTablet": true
+      "supportsTablet": true,
+      "bundleIdentifier": "com.decoarapp.decoar",
+      "infoPlist": {
+        "NSPhotoLibraryUsageDescription": "DecoAR necesita leer fotos para aplicar texturas personalizadas.",
+        "NSPhotoLibraryAddUsageDescription": "DecoAR guarda tus capturas de la vista AR en tu galería.",
+        "NSCameraUsageDescription": "DecoAR usa la cámara para detectar el piso y las paredes en Realidad Aumentada.",
+        "NSMicrophoneUsageDescription": "DecoAR usa el micrófono para capturas de video en AR.",
+        "ITSAppUsesNonExemptEncryption": false
+      }
     },
     "android": {
       "adaptiveIcon": {

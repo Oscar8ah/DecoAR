@@ -1,0 +1,40 @@
+name: Exportar modelo de muebles (YOLOE)
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  export:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Instalar PyTorch (CPU) y Ultralytics
+        run: |
+          pip install --index-url https://download.pytorch.org/whl/cpu torch torchvision
+          pip install ultralytics onnx
+
+      - name: Exportar modelo de interiores
+        run: python tools/export_interior_model.py yoloe-26n-seg.pt assets/models/decoar-interior.onnx
+
+      - name: Guardar como artefacto descargable
+        uses: actions/upload-artifact@v4
+        with:
+          name: decoar-interior-onnx
+          path: assets/models/decoar-interior.onnx
+
+      - name: Subir el modelo al repositorio
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add assets/models/decoar-interior.onnx
+          git commit -m "Modelo YOLOE de interiores exportado automáticamente" || echo "Sin cambios"
+          git push

@@ -14,10 +14,10 @@ import {
 // Ajusta los colores/opacidad a tu gusto (formato RRGGBBAA).
 ViroMaterials.createMaterials({
   floorHighlight: {
-    diffuseColor: '#22C55E66', // verde translúcido
+    diffuseColor: '#22C55E33', // verde translúcido
   },
   wallHighlight: {
-    diffuseColor: '#3B82F666', // azul translúcido
+    diffuseColor: '#3B82F633', // azul translúcido
   },
 });
 
