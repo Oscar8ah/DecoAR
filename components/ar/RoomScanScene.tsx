@@ -15,6 +15,8 @@ import {
   RoomModel,
   Vec3,
 } from './spatial/roomModel';
+import ManualFloorDrawer from './draw/ManualFloorDrawer';
+import { DrawState, reticleOnFloor } from './draw/drawModel';
 
 /**
  * ViroPolygon se dibuja en su plano XY; con rotación [-90,0,0] un punto (x, y)
@@ -47,6 +49,16 @@ export default function RoomScanScene(props: any) {
   const appProps = props?.arSceneNavigator?.viroAppProps ?? {};
   const onRoomModel: ((m: RoomModel) => void) | undefined = appProps.onRoomModel;
   const onDiagnostics: ((d: Record<string, unknown>) => void) | undefined = appProps.onDiagnostics;
+  const mode: 'auto' | 'draw' = appProps.mode ?? 'auto';
+  const drawState: DrawState | undefined = appProps.drawState;
+  const reticle: Vec3 | null = appProps.reticle ?? null;
+  const onReticle: ((r: Vec3 | null) => void) | undefined = appProps.onReticle;
+  const onDragEdge: ((edge: number, amount: number) => void) | undefined = appProps.onDragEdge;
+  // Refs para leer valores actuales dentro del callback de cámara (que se crea una sola vez).
+  const modeRef = useRef(mode); modeRef.current = mode;
+  const onReticleRef = useRef(onReticle); onReticleRef.current = onReticle;
+  const floorYRef = useRef<number | null>(null);
+  const lastReticle = useRef<{ at: number; p: Vec3 | null }>({ at: 0, p: null });
 
   const anchors = useRef(new Map<string, AnchorLike>());
   const memory = useRef(createRoomMemory());
@@ -75,6 +87,7 @@ export default function RoomScanScene(props: any) {
       const model = buildRoomModel(list, cameraPos.current, memory.current);
       // Guardamos la pose de cada ancla con la que se calculó el modelo, para pasar a coordenadas locales.
       const poses = new Map(list.map(a => [a.anchorId, { position: a.position, rotation: a.rotation }]));
+      floorYRef.current = model.floor?.y ?? null;
       setSnap({ model, poses });
       onRoomModel?.(model);
     }, RECOMPUTE_MS);
@@ -99,7 +112,19 @@ export default function RoomScanScene(props: any) {
 
   const onCamera = useCallback((t: any) => {
     const p = t?.position ?? t?.cameraTransform?.position;
+    const f = t?.forward ?? t?.cameraTransform?.forward;
     if (p) cameraPos.current = p as Vec3;
+
+    // MIRA central (modo Dibujar): rayo de la cámara ∩ plano del piso.
+    if (modeRef.current !== 'draw' || !p || !f || floorYRef.current === null) return;
+    const r = reticleOnFloor(p as Vec3, f as Vec3, floorYRef.current);
+    const now = Date.now(), prev = lastReticle.current;
+    const moved = !r || !prev.p ? r !== prev.p
+      : Math.hypot(r[0] - prev.p[0], r[2] - prev.p[2]) > 0.003;
+    if (moved && now - prev.at >= 50) {   // como máximo 20 veces por segundo, y solo si se movió > 3 mm
+      lastReticle.current = { at: now, p: r };
+      onReticleRef.current?.(r);
+    }
   }, []);
 
   return (
@@ -111,7 +136,17 @@ export default function RoomScanScene(props: any) {
       onCameraTransformUpdate={onCamera}
     >
       <ViroAmbientLight color="#ffffff" intensity={300} />
-      {snap && renderAnchored(snap)}
+      {/* Modo Automático: la reconstrucción de la habitación. En Dibujar se oculta para ver limpio. */}
+      {snap && mode === 'auto' && renderAnchored(snap)}
+      {/* Modo Dibujar: lo que el humano traza con la mira y el botón "+" */}
+      {mode === 'draw' && drawState && snap?.model.floor && (
+        <ManualFloorDrawer
+          state={drawState}
+          reticle={reticle}
+          floorY={snap.model.floor.y}
+          onDragEdge={(e, a) => onDragEdge?.(e, a)}
+        />
+      )}
     </ViroARScene>
   );
 }

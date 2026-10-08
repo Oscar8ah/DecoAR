@@ -247,8 +247,22 @@ export interface RoomMemory {
   wallSign: Map<string, 1 | -1>;
   floorY?: number;
   planes: Map<string, { n: Vec3; d: number }>;
+  /** Rendimiento: ver la sección PERF más abajo. */
+  perf: {
+    /** Última "firma" barata de las anclas de entrada; si no cambió, se reutiliza el modelo anterior tal cual. */
+    signature: string;
+    lastModel: RoomModel | null;
+    /** Un Plane ya calculado por ancla, reutilizable mientras esa ancla no cambie más que el umbral. */
+    planeCache: Map<string, { raw: AnchorLike; plane: Plane }>;
+    /** La unión real del piso (rasterizada) es cara; se recalcula a lo sumo cada `unionIntervalMs`. */
+    unionArea: number;
+    unionAt: number;
+  };
 }
-export const createRoomMemory = (): RoomMemory => ({ wallSign: new Map(), planes: new Map() });
+export const createRoomMemory = (): RoomMemory => ({
+  wallSign: new Map(), planes: new Map(),
+  perf: { signature: '', lastModel: null, planeCache: new Map(), unionArea: 0, unionAt: 0 },
+});
 
 // ─────────────────────────── Parámetros (afinables) ───────────────────────────
 
@@ -272,6 +286,11 @@ export const TUNING = {
   defaultWallHeight: 2.4,   // m (altura típica de vivienda) cuando no hay medición
   smoothing: 0.35,          // 0..1: peso del dato nuevo en el filtro exponencial
   rasterCell: 0.05,         // m: resolución para calcular el área de la unión del piso
+
+  // ───── PERF ─────
+  unionIntervalMs: 500,     // la unión rasterizada del piso (cara) se refresca a lo sumo cada tanto
+  posEpsilon: 0.002,        // m: por debajo de esto, una ancla "no cambió" para efectos de caché
+  rotEpsilon: 0.3,          // grados
 };
 
 // ─────────────────────────── Planos individuales ───────────────────────────
@@ -292,6 +311,34 @@ const LABELS: Record<string, SurfaceKind> = {
   floor: 'floor', wall: 'wall', ceiling: 'ceiling', door: 'door',
   window: 'window', table: 'table', seat: 'seat',
 };
+
+/** Firma barata: una vuelta sin trigonometría sobre los números que de verdad importan. */
+function signatureOf(anchors: AnchorLike[], cameraPos?: Vec3): string {
+  let h = 0;
+  const mix = (x: number) => { h = (h * 1000003 + (x * 1000 | 0)) | 0; };
+  for (const a of anchors) {
+    mix(a.position[0]); mix(a.position[1]); mix(a.position[2]);
+    mix(a.rotation[0]); mix(a.rotation[1]); mix(a.rotation[2]);
+    if (a.vertices) { mix(a.vertices.length); for (const v of a.vertices) { mix(v[0]); mix(v[1]); mix(v[2]); } }
+    else { mix(a.width ?? 0); mix(a.height ?? 0); }
+  }
+  if (cameraPos) { mix(cameraPos[0]); mix(cameraPos[1]); mix(cameraPos[2]); }
+  return `${anchors.length}:${h}`;
+}
+
+/** ¿Esta ancla se movió más que el ruido típico de tracking desde la última vez que la vimos? */
+function anchorUnchanged(prev: AnchorLike, next: AnchorLike): boolean {
+  const posEps = TUNING.posEpsilon, rotEps = TUNING.rotEpsilon;
+  if (length(sub(next.position, prev.position)) > posEps) return false;
+  if (Math.abs(next.rotation[0] - prev.rotation[0]) > rotEps
+    || Math.abs(next.rotation[1] - prev.rotation[1]) > rotEps
+    || Math.abs(next.rotation[2] - prev.rotation[2]) > rotEps) return false;
+  if ((next.vertices?.length ?? 0) !== (prev.vertices?.length ?? 0)) return false;
+  if (next.vertices && prev.vertices) {
+    for (let i = 0; i < next.vertices.length; i++) if (length(sub(next.vertices[i], prev.vertices[i])) > posEps) return false;
+  } else if ((next.width ?? 0) !== (prev.width ?? 0) || (next.height ?? 0) !== (prev.height ?? 0)) return false;
+  return next.classification === prev.classification;
+}
 
 function anchorToPlane(a: AnchorLike): Plane | null {
   if (!a.position || !a.rotation) return null;
@@ -368,7 +415,32 @@ const ema = (prev: number, next: number, a: number) => prev + a * (next - prev);
 // ─────────────────────────── Construcción del modelo ───────────────────────────
 
 export function buildRoomModel(anchors: AnchorLike[], cameraPos?: Vec3, memory: RoomMemory = createRoomMemory()): RoomModel {
-  const planes = anchors.filter(a => a.type !== 'image').map(anchorToPlane).filter((p): p is Plane => !!p);
+  // ───── PERF: cortocircuito por firma ─────
+  // ARKit reemite `onAnchorUpdated` muy seguido, a menudo con datos iguales o con un
+  // meneo por debajo del milímetro. Comparar una firma barata (una vuelta sobre los
+  // números, sin trigonometría ni geometría) es muchísimo más barato que recalcular
+  // todo, así que si nada cambió de verdad, devolvemos el MISMO objeto de la última
+  // vez (misma referencia) — eso además deja que React salte el render con `setSnap`.
+  const sig = signatureOf(anchors, cameraPos);
+  if (memory.perf.lastModel && sig === memory.perf.signature) return memory.perf.lastModel;
+  memory.perf.signature = sig;
+
+  // ───── PERF: caché de Plane por ancla ─────
+  // anchorToPlane() hace trigonometría y copia vértices; si esta ancla puntual no se
+  // movió más que el umbral desde la última vez, reutilizamos el Plane ya calculado
+  // en vez de rehacerlo. Con 1 sola ancla cambiando de 24, esto evita 23 conversiones.
+  const planes: Plane[] = [];
+  const seen = new Set<string>();
+  for (const a of anchors) {
+    if (a.type === 'image') continue;
+    seen.add(a.anchorId);
+    const cached = memory.perf.planeCache.get(a.anchorId);
+    if (cached && anchorUnchanged(cached.raw, a)) { planes.push(cached.plane); continue; }
+    const p = anchorToPlane(a);
+    if (p) { planes.push(p); memory.perf.planeCache.set(a.anchorId, { raw: a, plane: p }); }
+    else memory.perf.planeCache.delete(a.anchorId);
+  }
+  for (const id of [...memory.perf.planeCache.keys()]) if (!seen.has(id)) memory.perf.planeCache.delete(id);
   const horizontals = planes.filter(p => p.orientation === 'horizontal');
   const verticals = planes.filter(p => p.orientation === 'vertical');
   const heightOf = (p: Plane) => p.polygon.reduce((s, v) => s + v[1], 0) / p.polygon.length;
@@ -550,7 +622,16 @@ export function buildRoomModel(anchors: AnchorLike[], cameraPos?: Vec3, memory: 
     }
     const all = clipped.flat();
     const hull = convexHull(all);
-    const unionA = unionArea(clipped, TUNING.rasterCell);
+    // PERF: la rasterización de la unión real es, de lejos, lo más caro de todo el cálculo.
+    // El área solo alimenta un número en el HUD, así que no hace falta recalcularla en
+    // cada pasada: se refresca a lo sumo cada `unionIntervalMs` y el resto del tiempo
+    // se reutiliza el último valor (que para el ojo humano es indistinguible).
+    const now = Date.now();
+    if (now - memory.perf.unionAt >= TUNING.unionIntervalMs) {
+      memory.perf.unionArea = unionArea(clipped, TUNING.rasterCell);
+      memory.perf.unionAt = now;
+    }
+    const unionA = memory.perf.unionArea;
     const labelScore = floorMembers.some(p => p.label === 'floor') ? 1 : 0.6;
     floor = {
       type: 'floor', y: floorY, normal: [0, 1, 0],
@@ -595,7 +676,7 @@ export function buildRoomModel(anchors: AnchorLike[], cameraPos?: Vec3, memory: 
       };
     });
 
-  return {
+  const result: RoomModel = {
     floor,
     ceiling: ceilingY !== null ? {
       type: 'ceiling', y: ceilingY, area: ceilingPlanes.reduce((s, p) => s + p.area, 0),
@@ -607,4 +688,6 @@ export function buildRoomModel(anchors: AnchorLike[], cameraPos?: Vec3, memory: 
     heightEstimate, fragments,
     stats: { anchors: planes.length, horizontal: horizontals.length, vertical: verticals.length },
   };
+  memory.perf.lastModel = result;
+  return result;
 }
