@@ -61,6 +61,7 @@ export type DrawAction =
   | { type: 'undo' }
   | { type: 'redo' }
   | { type: 'reset' }
+  | { type: 'clearAll' }   // borra TODO incluido el historial (al terminar una sesión AR)
   | { type: 'startHole' }
   | { type: 'cancelHole' }
   | { type: 'select'; target: Target | null }
@@ -336,6 +337,8 @@ function closeCurrent(s: DrawState): DrawState {
 
 export function drawReducer(state: DrawState, a: DrawAction): DrawState {
   switch (a.type) {
+    case 'clearAll':
+      return initialDrawState();
     case 'beginEdit': {
       const s = endGesture(state);
       return { ...s, gesture: true, past: [...s.past, geo(s)].slice(-HISTORY_LIMIT) };

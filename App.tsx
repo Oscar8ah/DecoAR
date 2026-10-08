@@ -4,6 +4,9 @@ import { ViroARSceneNavigator } from '@reactvision/react-viro';
 import RoomScanScene from './components/ar/RoomScanScene';
 import type { RoomModel, Vec3 } from './components/ar/spatial/roomModel';
 import { drawReducer, drawStats, initialDrawState, snapReticle } from './components/ar/draw/drawModel';
+import { PerformanceBanner, PerformanceGate } from './components/perf/PerformanceGate';
+import { TIER_SPECS, Tier } from './components/perf/perfModel';
+import { useDeviceProfile, usePerformanceGovernor } from './components/perf/usePerformance';
 
 type Mode = 'auto' | 'draw';
 
@@ -15,6 +18,14 @@ export default function App() {
   const [reticle, setReticle] = useState<Vec3 | null>(null);
   const [drawState, dispatch] = useReducer(drawReducer, undefined, initialDrawState);
   const [toast, setToast] = useState<string | null>(null);
+
+  // ─── Rendimiento: pantalla de inicio, nivel y vigilante ───
+  const { info, profile, benchmarkMs } = useDeviceProfile();
+  const [tier, setTier] = useState<Tier>(profile.recommended);
+  const [started, setStarted] = useState(false);   // la cámara AR no arranca hasta que se escoge nivel
+  const [gateOpen, setGateOpen] = useState(true);
+  const [notice, setNotice] = useState<string | null>(null);
+  const [simLoad, setSimLoad] = useState(false);
 
   // `dispatch` de useReducer es estable: se pasa tal cual a la escena AR.
   const appProps = useMemo(() => ({
@@ -32,6 +43,32 @@ export default function App() {
   const walls = (room?.walls ?? []).filter(w => w.confidence >= 0.5);
 
   const showToast = (t: string) => { setToast(t); setTimeout(() => setToast(null), 2200); };
+
+  /** Sesión terminada: las coordenadas de una sesión AR no valen en la siguiente, así que se limpia todo. */
+  const endSession = (msg: string | null) => {
+    setStarted(false);
+    setGateOpen(true);
+    setNotice(msg);
+    setRoom(null);
+    setReticle(null);
+    dispatch({ type: 'clearAll' });
+  };
+
+  const countdown = usePerformanceGovernor({
+    tier,
+    active: started && !gateOpen,
+    simulateLoad: simLoad,
+    onDrop: (_from, to) => { setTier(to); showToast(`Bajamos a ${TIER_SPECS[to].label} para que fluya mejor`); },
+    onUnfit: () => {
+      setTier('basic');
+      endSession('Tu celular no logró mantener la fluidez ni en Básico. Prueba en un lugar con más luz, cierra otras apps, o usa otro celular.');
+    },
+  });
+  const dropNow = () => {
+    if (!countdown) return;
+    if (countdown.target === 'exit') { setTier('basic'); endSession('Volviste al inicio porque tu celular iba muy lento.'); }
+    else { setTier(countdown.target); showToast(`Bajamos a ${TIER_SPECS[countdown.target].label}`); }
+  };
 
   const capture = async () => {
     try {
@@ -96,11 +133,36 @@ export default function App() {
 
   return (
     <View style={styles.container}>
-      <ViroARSceneNavigator
-        ref={navRef}
-        initialScene={{ scene: RoomScanScene as any }}
-        viroAppProps={appProps}
-        style={styles.flex}
+      {started && (
+        <ViroARSceneNavigator
+          ref={navRef}
+          initialScene={{ scene: RoomScanScene as any }}
+          viroAppProps={appProps}
+          style={styles.flex}
+        />
+      )}
+
+      {/* Nivel actual: toca para cambiarlo sin salir de la cámara */}
+      {started && !gateOpen && (
+        <TouchableOpacity style={styles.tierChip} onPress={() => setGateOpen(true)}>
+          <Text style={styles.tierChipText}>Nivel: {TIER_SPECS[tier].label} ▾</Text>
+        </TouchableOpacity>
+      )}
+
+      {countdown && <PerformanceBanner countdown={countdown} onNow={dropNow} />}
+
+      <PerformanceGate
+        visible={gateOpen}
+        opaque={!started}
+        info={info}
+        profile={profile}
+        benchmarkMs={benchmarkMs}
+        initialTier={started ? tier : profile.recommended}
+        notice={notice}
+        simulateLoad={simLoad}
+        onSimulateLoad={setSimLoad}
+        onConfirm={t => { setTier(t); setStarted(true); setGateOpen(false); setNotice(null); }}
+        onCancel={started ? () => setGateOpen(false) : undefined}
       />
 
       {/* Arriba: deshacer y borrar (modo Dibujar) */}
@@ -228,6 +290,8 @@ const styles = StyleSheet.create({
   round: { position: 'absolute', top: 60, width: 46, height: 46, borderRadius: 23, backgroundColor: glass, alignItems: 'center', justifyContent: 'center' },
   topLeft: { left: 18 },
   topLeft2: { left: 72 },
+  tierChip: { position: 'absolute', top: 66, alignSelf: 'center', backgroundColor: 'rgba(40,40,40,0.55)', paddingVertical: 8, paddingHorizontal: 14, borderRadius: 18 },
+  tierChipText: { color: '#fff', fontSize: 12, fontWeight: '700' },
   topRight: { right: 18 },
   roundOff: { opacity: 0.35 },
   roundIcon: { color: '#fff', fontSize: 22 },
