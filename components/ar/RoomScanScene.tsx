@@ -6,6 +6,7 @@ import {
   ViroMaterials,
   ViroPolygon,
   ViroPolyline,
+  ViroText,
 } from '@reactvision/react-viro';
 import {
   buildRoomModel,
@@ -16,7 +17,7 @@ import {
   Vec3,
 } from './spatial/roomModel';
 import ManualFloorDrawer from './draw/ManualFloorDrawer';
-import { DrawState, reticleOnFloor } from './draw/drawModel';
+import { DrawAction, DrawState, reticleOnFloor } from './draw/drawModel';
 
 /**
  * ViroPolygon se dibuja en su plano XY; con rotación [-90,0,0] un punto (x, y)
@@ -53,7 +54,7 @@ export default function RoomScanScene(props: any) {
   const drawState: DrawState | undefined = appProps.drawState;
   const reticle: Vec3 | null = appProps.reticle ?? null;
   const onReticle: ((r: Vec3 | null) => void) | undefined = appProps.onReticle;
-  const onDragEdge: ((edge: number, amount: number) => void) | undefined = appProps.onDragEdge;
+  const onDrawAction: ((a: DrawAction) => void) | undefined = appProps.onDrawAction;
   // Refs para leer valores actuales dentro del callback de cámara (que se crea una sola vez).
   const modeRef = useRef(mode); modeRef.current = mode;
   const onReticleRef = useRef(onReticle); onReticleRef.current = onReticle;
@@ -144,7 +145,7 @@ export default function RoomScanScene(props: any) {
           state={drawState}
           reticle={reticle}
           floorY={snap.model.floor.y}
-          onDragEdge={(e, a) => onDragEdge?.(e, a)}
+          dispatch={a => onDrawAction?.(a)}
         />
       )}
     </ViroARScene>
@@ -219,9 +220,28 @@ function renderAnchored({ model, poses }: Snapshot) {
       vertices={polyXZ(pts)} holes={[]} materials={['roomObject']} />);
   }
 
+  // ETIQUETAS: qué reconoció el sistema en la escena (posición calculada en mundo y pasada a local).
+  const label = (id: string, key: string, text: string, world: Vec3) =>
+    push(id, <ViroText key={key} text={text} position={local(id, [world])[0]}
+      scale={[0.15, 0.15, 0.15]} style={labelStyle} transformBehaviors={['billboard']} />);
+  const up = (p: Vec3, dy: number): Vec3 => [p[0], p[1] + dy, p[2]];
+  const firstFloor = model.floor?.pieces[0]?.anchorId;
+  if (model.floor && firstFloor) label(firstFloor, 'lbl-floor', `PISO · ${model.floor.area.toFixed(1)} m²`, up(model.floor.center, 0.05));
+  for (const w of walls) {
+    const mid: Vec3 = [(w.baseline[0][0] + w.baseline[1][0]) / 2, w.baseline[0][1] + 0.25, (w.baseline[0][2] + w.baseline[1][2]) / 2];
+    label(w.keyAnchorId, `lbl-${w.id}`, `PARED · ${fmtM(w.width)}`, mid);
+    for (const o of w.openings) label(w.keyAnchorId, `lbl-${o.id}`, o.type === 'door' ? 'PUERTA' : 'VENTANA', o.center);
+  }
+  for (const o of model.objects) label(o.id, `lbl-${o.id}`, o.type === 'table' ? 'MESA' : 'ASIENTO', up(o.center, 0.15));
+
   return [...byAnchor.entries()].map(([anchorId, children]) => (
     <ViroARPlane key={anchorId} anchorId={anchorId} minWidth={0} minHeight={0}>
       {children}
     </ViroARPlane>
   ));
 }
+const fmtM = (m: number) => (m < 1 ? `${Math.round(m * 100)} cm` : `${m.toFixed(2)} m`);
+const labelStyle = {
+  fontFamily: 'Arial', fontSize: 14, color: '#ffffff',
+  textAlignVertical: 'center' as const, textAlign: 'center' as const,
+};

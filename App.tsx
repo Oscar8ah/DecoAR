@@ -1,4 +1,4 @@
-import React, { useCallback, useMemo, useReducer, useRef, useState } from 'react';
+import React, { useMemo, useReducer, useRef, useState } from 'react';
 import { StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { ViroARSceneNavigator } from '@reactvision/react-viro';
 import RoomScanScene from './components/ar/RoomScanScene';
@@ -16,17 +16,16 @@ export default function App() {
   const [drawState, dispatch] = useReducer(drawReducer, undefined, initialDrawState);
   const [toast, setToast] = useState<string | null>(null);
 
-  const onDragEdge = useCallback((edge: number, amount: number) => dispatch({ type: 'dragEdge', edge, amount }), []);
-
+  // `dispatch` de useReducer es estable: se pasa tal cual a la escena AR.
   const appProps = useMemo(() => ({
     onRoomModel: setRoom,
     onDiagnostics: setDiag,
     onReticle: setReticle,
-    onDragEdge,
+    onDrawAction: dispatch,
     mode,
     drawState,
     reticle,
-  }), [mode, drawState, reticle, onDragEdge]);
+  }), [mode, drawState, reticle]);
 
   const stats = drawStats(drawState, reticle);
   const floorReady = !!room?.floor;
@@ -49,6 +48,15 @@ export default function App() {
   };
   const canPlus = mode === 'draw' && floorReady && !!reticle && drawState.phase !== 'floorDone';
 
+  // Intervención humana: el piso que detectó el sistema pasa a ser una figura editable.
+  const importDetected = () => {
+    if (room?.floor && room.floor.polygon.length >= 3) dispatch({ type: 'importFloor', polygon: room.floor.polygon });
+  };
+  const correctByHand = () => {
+    setMode('draw');
+    if (!drawState.floor) importDetected();
+  };
+
   // ─── Textos de ayuda ───
   let hint: string;
   if (mode === 'auto') {
@@ -70,13 +78,16 @@ export default function App() {
       : stats.snapped ? 'Presiona + para cerrar el objeto'
       : 'Rodea la base del objeto y presiona + en cada esquina';
   } else {
-    hint = 'Arrastra los puntos azules para estirar un lado, o marca un objeto';
+    hint = 'Arrastra: ⚪ esquina · 🔵 lado · 🟢 mover. Toca una figura para editarla';
   }
 
   // ─── Botón contextual a la izquierda del "+" ───
   let chip: { label: string; onPress: () => void } | null = null;
-  if (mode === 'draw') {
+  if (mode === 'auto') {
+    if (room?.floor) chip = { label: '✎ Corregir a mano', onPress: correctByHand };
+  } else {
     if (drawState.phase === 'floor' && stats.points >= 3) chip = { label: 'Cerrar forma', onPress: () => dispatch({ type: 'close' }) };
+    else if (drawState.phase === 'floor' && stats.points === 0 && room?.floor) chip = { label: 'Usar piso detectado', onPress: importDetected };
     else if (drawState.phase === 'floorDone') chip = { label: 'Marcar objeto', onPress: () => dispatch({ type: 'startHole' }) };
     else if (drawState.phase === 'hole') chip = stats.points >= 3
       ? { label: 'Cerrar objeto', onPress: () => dispatch({ type: 'close' }) }
@@ -95,8 +106,13 @@ export default function App() {
       {/* Arriba: deshacer y borrar (modo Dibujar) */}
       {mode === 'draw' && (
         <>
-          <TouchableOpacity style={[styles.round, styles.topLeft]} onPress={() => dispatch({ type: 'undo' })}>
+          <TouchableOpacity style={[styles.round, styles.topLeft, !stats.canUndo && styles.roundOff]}
+            disabled={!stats.canUndo} onPress={() => dispatch({ type: 'undo' })}>
             <Text style={styles.roundIcon}>↶</Text>
+          </TouchableOpacity>
+          <TouchableOpacity style={[styles.round, styles.topLeft2, !stats.canRedo && styles.roundOff]}
+            disabled={!stats.canRedo} onPress={() => dispatch({ type: 'redo' })}>
+            <Text style={styles.roundIcon}>↷</Text>
           </TouchableOpacity>
           <TouchableOpacity style={[styles.round, styles.topRight]} onPress={() => dispatch({ type: 'reset' })}>
             <Text style={styles.roundIcon}>🗑</Text>
@@ -126,10 +142,16 @@ export default function App() {
             <Text style={styles.line}>
               {stats.liveLength !== null ? `Lado: ${fmt(stats.liveLength)}   ` : ''}
               {drawState.floor
-                ? `Área: ${stats.floorArea.toFixed(2)} m²   Perímetro: ${stats.floorPerimeter.toFixed(2)} m   Objetos: ${stats.holes}`
+                ? `Área útil: ${stats.floorArea.toFixed(2)} m²   Perímetro: ${stats.floorPerimeter.toFixed(2)} m   Objetos: ${stats.holes}`
                 : `Puntos: ${stats.points}`}
             </Text>
-          ) : (
+          ) : null}
+          {mode === 'draw' && drawState.phase === 'floorDone' && stats.selectedArea !== null ? (
+            <Text style={styles.line}>
+              {stats.selectedLabel}: {stats.selectedArea.toFixed(2)} m²{stats.axisSnapped ? '   ⟂ alineado' : ''}
+            </Text>
+          ) : null}
+          {mode === 'draw' ? null : (
             <>
               <Text style={styles.line}>
                 Piso: {room?.floor ? `${room.floor.area.toFixed(2)} m²` : '—'}   Paredes: {walls.length}   Esquinas: {room?.corners.length ?? 0}
@@ -141,6 +163,19 @@ export default function App() {
             </>
           )}
         </View>
+
+        {mode === 'draw' && drawState.phase === 'floorDone' && (
+          <View style={styles.editBar} pointerEvents="box-none">
+            <TouchableOpacity style={styles.chip} onPress={() => dispatch({ type: 'cycleSelection' })}>
+              <Text style={styles.chipText}>Editando: {stats.selectedLabel ?? '—'}  ▸</Text>
+            </TouchableOpacity>
+            {typeof drawState.selected === 'number' && (
+              <TouchableOpacity style={[styles.chip, styles.chipDanger]} onPress={() => dispatch({ type: 'deleteSelected' })}>
+                <Text style={styles.chipText}>Eliminar objeto</Text>
+              </TouchableOpacity>
+            )}
+          </View>
+        )}
 
         <View style={styles.controls} pointerEvents="box-none">
           <View style={styles.side}>
@@ -192,7 +227,9 @@ const styles = StyleSheet.create({
 
   round: { position: 'absolute', top: 60, width: 46, height: 46, borderRadius: 23, backgroundColor: glass, alignItems: 'center', justifyContent: 'center' },
   topLeft: { left: 18 },
+  topLeft2: { left: 72 },
   topRight: { right: 18 },
+  roundOff: { opacity: 0.35 },
   roundIcon: { color: '#fff', fontSize: 22 },
 
   crosshairWrap: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, alignItems: 'center', justifyContent: 'center' },
@@ -216,6 +253,8 @@ const styles = StyleSheet.create({
   side: { flex: 1 },
   chip: { alignSelf: 'flex-start', backgroundColor: glass, paddingVertical: 10, paddingHorizontal: 14, borderRadius: 20 },
   chipText: { color: '#fff', fontSize: 13, fontWeight: '600' },
+  chipDanger: { backgroundColor: 'rgba(185,28,28,0.7)' },
+  editBar: { flexDirection: 'row', gap: 8, alignSelf: 'stretch', paddingHorizontal: 18, marginBottom: 10 },
   plus: { width: 78, height: 78, borderRadius: 39, backgroundColor: 'rgba(120,120,120,0.6)', alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: 'rgba(255,255,255,0.3)' },
   plusOff: { opacity: 0.35 },
   plusText: { color: '#fff', fontSize: 44, fontWeight: '300', marginTop: -4 },
