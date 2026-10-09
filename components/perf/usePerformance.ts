@@ -13,19 +13,28 @@ import { runJsBenchmark, startLagSampler, startLoadSimulator } from './perfRunti
  */
 export function readDeviceInfo(): DeviceInfo {
   const os: DeviceInfo['os'] = Platform.OS === 'ios' ? 'ios' : Platform.OS === 'android' ? 'android' : 'other';
+  const nothing: DeviceInfo = { os, modelId: null, modelName: null, brand: null, totalMemoryBytes: null, source: 'none' };
+  // Cada lectura va protegida por separado: expo-device no truena en el require, sino al
+  // ACCEDER a una propiedad cuando el módulo nativo no está en la compilación instalada
+  // (pasa siempre con un build hecho ANTES de `npx expo install expo-device`).
+  const safe = <T,>(read: () => T): T | null => { try { return read() ?? null; } catch { return null; } };
   try {
     // eslint-disable-next-line @typescript-eslint/no-require-imports
     const Device = require('expo-device');
+    if (!Device) return nothing;
+    const modelId = safe(() => Device.modelId as string);
+    const modelName = safe(() => Device.modelName as string);
+    const brand = safe(() => Device.brand as string);
+    const mem = safe(() => Device.totalMemory as number);
+    // Si NADA se pudo leer, el módulo nativo no está: se informa en vez de fingir datos.
+    if (modelId === null && modelName === null && brand === null && mem === null) return nothing;
     return {
-      os,
-      modelId: Device.modelId ?? null,
-      modelName: Device.modelName ?? null,
-      brand: Device.brand ?? null,
-      totalMemoryBytes: typeof Device.totalMemory === 'number' ? Device.totalMemory : null,
+      os, modelId, modelName, brand,
+      totalMemoryBytes: typeof mem === 'number' && Number.isFinite(mem) ? mem : null,
       source: 'expo-device',
     };
   } catch {
-    return { os, modelId: null, modelName: null, brand: null, totalMemoryBytes: null, source: 'none' };
+    return nothing;
   }
 }
 
