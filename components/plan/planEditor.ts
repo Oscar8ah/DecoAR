@@ -63,7 +63,33 @@ export type Esquina = 'no' | 'ne' | 'so' | 'se';
 export interface Contacto { modulo_a: string; modulo_b: string; lado: Lado; ini: number; fin: number; exterior: boolean; nivel: number }
 
 /** Lo mismo que guarda la foto del historial web: módulos, vanos, muros cerrados y niveles (visor3d.js:7002). */
-export interface Planta { modulos: Modulo[]; vanos: Vano[]; murosCerrados: string[]; niveles: number }
+export interface Planta { modulos: Modulo[]; vanos: Vano[]; murosCerrados: string[]; niveles: number; origen?: OrigenPlano }
+
+// ── P0 compatibilidad: el plano tal como llegó, para exportarlo sin perder nada ──
+/**
+ * 'ia'  = plano de plano_a_json_3d / WhatsApp (openai_service.py): `tipo` en la raíz, sin `tipo` por módulo.
+ * 'web' = plano de generarDesdePlanta (visor3d.js:8340-8392): niveles, altura_entrepiso, envolvente…
+ * 'desconocido' = señales de ambos o de ninguno (p. ej. los ejemplos propios de DecoAR).
+ * 'nuevo' = dibujado desde cero en DecoAR: no hay original que conservar.
+ */
+export type Dialecto = 'ia' | 'web' | 'desconocido' | 'nuevo';
+
+/** Copia intacta del plano cargado. Nunca se edita: es la referencia para exportar. */
+export interface OrigenPlano {
+  plano: Plano;
+  /** id interno (texto) → id original con su tipo (número del editor web o texto de la IA). */
+  ids: Record<string, string | number>;
+  dialecto: Exclude<Dialecto, 'nuevo'>;
+}
+
+export interface ResultadoExportacion {
+  plano: Plano;
+  dialecto: Dialecto;
+  /** true solo si cambió algún contacto entre cuartos y por eso se recalcularon. */
+  paredesRecalculadas: boolean;
+  /** Casos que la exportación no resolvió sola. Vacío = sin conflictos. */
+  conflictos: string[];
+}
 
 export type Seleccion = { tipo: 'modulo'; id: string } | { tipo: 'vano'; id: string } | null;
 
@@ -106,8 +132,13 @@ export type AccionEditor =
 const ajustar = (v: number) => Math.round(v / CUADRICULA) * CUADRICULA;
 export const claveMuro = (o: { modulo_a: string; modulo_b?: string | null; lado: Lado }) => `${o.modulo_a}|${o.modulo_b}|${o.lado}`;
 const nivelDe = (m: { nivel?: number | null }) => m.nivel || 0;
-const foto = (p: Planta) => JSON.stringify({ m: p.modulos, v: p.vanos, c: p.murosCerrados, n: p.niveles });
-const deFoto = (s: string): Planta => { const e = JSON.parse(s); return { modulos: e.m, vanos: e.v, murosCerrados: e.c || [], niveles: e.n || 1 }; };
+const foto = (p: Planta) => JSON.stringify({ m: p.modulos, v: p.vanos, c: p.murosCerrados, n: p.niveles, o: p.origen });
+const deFoto = (s: string): Planta => {
+  const e = JSON.parse(s);
+  const p: Planta = { modulos: e.m, vanos: e.v, murosCerrados: e.c || [], niveles: e.n || 1 };
+  if (e.o) p.origen = e.o;   // el original no cambia nunca; solo viaja con la foto
+  return p;
+};
 const capitalizar = (t: string) => t.charAt(0).toUpperCase() + t.slice(1);
 
 export function editorVacio(): EditorPlanta {
@@ -191,15 +222,118 @@ function convertirPlanta(p: Planta, generarId: () => string): Planta {
 
 /** El plano que entiende el generador de maqueta, con la forma del serializador web. */
 export function planoDe(p: Planta): Plano {
+  // P0: si el plano vino de fuera, su alto_piso y su altura_entrepiso mandan (un entrepiso de 3 m
+  // no se apila a 2,80). Sin origen, o si el original no los trae, todo queda exactamente como antes.
+  const o = p.origen?.plano;
   return {
     tipo: 'apartamento',
-    alto_piso: p.modulos[0]?.alto || ALTO_MODULO_DEF,
-    altura_entrepiso: ALTURA_ENTREPISO_DEF,
+    alto_piso: typeof o?.alto_piso === 'number' ? o.alto_piso : (p.modulos[0]?.alto || ALTO_MODULO_DEF),
+    altura_entrepiso: typeof o?.altura_entrepiso === 'number' ? o.altura_entrepiso : ALTURA_ENTREPISO_DEF,
     niveles: p.niveles,
     modulos: p.modulos.map(m => ({ ...m, paredes_eliminadas: m.paredes_eliminadas ?? [] })),
     vanos: p.vanos.map(v => ({ ...v })),
     paredes_compartidas: paredesCompartidas(p),
   };
+}
+
+// ───────────────────── P0: dialecto y exportación fiel ─────────────────────
+const tiene = (o: unknown, k: string) => !!o && typeof o === 'object' && Object.prototype.hasOwnProperty.call(o, k);
+
+/**
+ * Señales verificadas en el código de DecoiArte:
+ *  · solo la WEB escribe en la raíz `altura_entrepiso`, `niveles` y `envolvente`, en cada módulo `nivel` y
+ *    `capa`, y en cada pared compartida `ini`/`fin` (visor3d.js:8277-8392);
+ *  · solo la IA escribe `tipo` en la raíz y `es_humeda` en los módulos, y sus paredes compartidas no
+ *    llevan `ini`/`fin` (openai_service.py:296-318 y 485-510).
+ * Si aparecen señales de los dos, o de ninguno, es 'desconocido': no se adivina.
+ */
+export function detectarDialecto(plano: Plano): Exclude<Dialecto, 'nuevo'> {
+  const mods = (plano.modulos ?? []) as unknown[];
+  const pcs = (plano.paredes_compartidas ?? []) as unknown[];
+  const web = ['altura_entrepiso', 'niveles', 'envolvente'].some(k => tiene(plano, k))
+    || mods.some(m => tiene(m, 'nivel') || tiene(m, 'capa'))
+    || pcs.some(c => tiene(c, 'ini') || tiene(c, 'fin'));
+  const ia = tiene(plano, 'tipo')
+    || mods.some(m => tiene(m, 'es_humeda'))
+    || pcs.some(c => !tiene(c, 'ini') && !tiene(c, 'fin'));
+  if (web && !ia) return 'web';
+  if (ia && !web) return 'ia';
+  return 'desconocido';
+}
+
+const OPUESTO: Record<Lado, Lado> = { norte: 'sur', sur: 'norte', este: 'oeste', oeste: 'este' };
+
+/**
+ * Huella de los contactos entre cuartos, independiente del orden de los módulos y de qué cuarto
+ * quedó como `modulo_a`: el mismo muro visto desde el otro lado da la misma clave. Los extremos se
+ * redondean a micras para que mover y devolver un cuarto no cuente como cambio por ruido decimal.
+ */
+function huellaContactos(p: Planta): string {
+  const um = (v: number | undefined) => Math.round((v ?? 0) * 1e6);
+  return paredesCompartidas(p).map(c => {
+    const [a, b, lado] = c.modulo_a < c.modulo_b ? [c.modulo_a, c.modulo_b, c.lado] : [c.modulo_b, c.modulo_a, OPUESTO[c.lado]];
+    return `${a}|${b}|${lado}|${um(c.ini)}|${um(c.fin)}`;
+  }).sort().join(';');
+}
+
+/** Copia sin las claves cuyo valor es `undefined` (en JSON no existen: ausente sigue siendo ausente). */
+function sinIndefinidos<T extends object>(o: T): T {
+  return Object.fromEntries(Object.entries(o).filter(([, v]) => v !== undefined)) as T;
+}
+
+/**
+ * Devuelve el plano para guardarlo, partiendo del ORIGINAL y cambiando solo lo que se editó.
+ *  · Ids con su tipo original; claves desconocidas, `null` y ausencias tal cual; raíz intacta.
+ *  · `paredes_compartidas`: si ningún contacto entre cuartos cambió, se devuelven las originales sin
+ *    tocar. Si cambió alguno, se recalculan con las reglas de la web y con la forma del original
+ *    (con `ini`/`fin` solo si el original las usaba). Si no hay forma de saberlo, se conservan las
+ *    originales y se informa el conflicto: no se inventa una conversión.
+ *  · Lo que el editor añadió y el dialecto original no usa se exporta y se informa como conflicto.
+ */
+export function exportarPlano(p: Planta): ResultadoExportacion {
+  const o = p.origen;
+  if (!o) return { plano: planoDe(p), dialecto: 'nuevo', paredesRecalculadas: true, conflictos: [] };
+
+  const orig = o.plano;
+  const idOrig = (id: unknown) => (id == null ? id : (o.ids[String(id)] ?? id)) as any;
+  const conflictos: string[] = [];
+  const out: any = JSON.parse(JSON.stringify(orig));   // raíz completa: tipo, alto_piso, envolvente, claves desconocidas…
+
+  out.modulos = p.modulos.map(m => sinIndefinidos({ ...m, id: idOrig(m.id) }));
+
+  const vanos = p.vanos.map(v => sinIndefinidos({ ...v, modulo_a: idOrig(v.modulo_a), modulo_b: idOrig(v.modulo_b) }));
+  if (tiene(orig, 'vanos')) out.vanos = vanos;
+  else if (vanos.length) {
+    out.vanos = vanos;
+    conflictos.push(`El plano original (${o.dialecto}) no tenía "vanos"; se exportan ${vanos.length} creados en DecoAR.`);
+  }
+
+  const nivelesCargados = orig.niveles || 1;   // lo mismo que hace cargar()
+  if (p.niveles !== nivelesCargados) {
+    out.niveles = p.niveles;
+    if (!tiene(orig, 'niveles')) conflictos.push(`El plano original (${o.dialecto}) no tenía "niveles"; se exporta niveles = ${p.niveles}.`);
+  }
+
+  const nuevos = p.modulos.filter(m => !(String(m.id) in o.ids)).length;
+  if (nuevos && o.dialecto === 'ia') conflictos.push(`Se añadieron ${nuevos} espacio(s) con campos del editor web (tipo, nivel, capa…) a un plano de la IA.`);
+
+  // Contactos del original, con los mismos ids internos que usa el editor
+  const plantaOriginal: Planta = { modulos: (orig.modulos ?? []).map(m => ({ ...m, id: String(m.id) })), vanos: [], murosCerrados: [], niveles: nivelesCargados };
+  const cambioGeometrico = huellaContactos(plantaOriginal) !== huellaContactos(p);
+  if (!cambioGeometrico) return { plano: out, dialecto: o.dialecto, paredesRecalculadas: false, conflictos };
+
+  // Forma de las paredes: la del original si tenía alguna; si no, la de su dialecto; si tampoco, no se adivina.
+  const pcsOrig = (orig.paredes_compartidas ?? []) as unknown[];
+  const conTramo = pcsOrig.length ? pcsOrig.some(c => tiene(c, 'ini') || tiene(c, 'fin'))
+    : o.dialecto === 'web' ? true : o.dialecto === 'ia' ? false : null;
+  if (conTramo === null) {
+    conflictos.push('Cambiaron los contactos, pero no se puede saber qué forma de paredes_compartidas usa este plano: se conservaron las originales.');
+    return { plano: out, dialecto: o.dialecto, paredesRecalculadas: false, conflictos };
+  }
+  out.paredes_compartidas = paredesCompartidas(p).map(c => conTramo
+    ? { modulo_a: idOrig(c.modulo_a), modulo_b: idOrig(c.modulo_b), lado: c.lado, ini: c.ini, fin: c.fin }
+    : { modulo_a: idOrig(c.modulo_a), modulo_b: idOrig(c.modulo_b), lado: c.lado });
+  return { plano: out, dialecto: o.dialecto, paredesRecalculadas: true, conflictos };
 }
 
 // ───────────────────────────── Reductor ─────────────────────────────
@@ -260,6 +394,10 @@ function rehacer(e0: EditorPlanta): EditorPlanta {
 function cargar(plano: Plano): EditorPlanta {
   const e = editorVacio();
   const t = (x: unknown) => (x == null ? (x as null) : String(x));
+  // P0: copia intacta (vía JSON, que es como vive en modelo_json) y tipo original de cada id.
+  const copia: Plano = JSON.parse(JSON.stringify(plano));
+  const ids: Record<string, string | number> = {};
+  for (const m of copia.modulos ?? []) ids[String(m.id)] = m.id as string | number;
   return {
     ...e,
     planta: {
@@ -267,6 +405,7 @@ function cargar(plano: Plano): EditorPlanta {
       vanos: (plano.vanos ?? []).map(v => ({ ...v, modulo_a: String(v.modulo_a), modulo_b: t(v.modulo_b) })),
       murosCerrados: [],
       niveles: plano.niveles || 1,
+      origen: { plano: copia, ids, dialecto: detectarDialecto(copia) },
     },
   };
 }
