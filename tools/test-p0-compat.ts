@@ -151,7 +151,8 @@ for (const [n, p, id] of [['real 1', PLANO_REAL_1, 'cocina'], ['web', PLANO_WEB,
     pcs.some(c => c.modulo_a === 'cocina' && c.modulo_b === 'bano' && c.lado === 'sur'));
   const esperadas = paredesCompartidas(e.planta).map(c => ({ modulo_a: c.modulo_a, modulo_b: c.modulo_b, lado: c.lado }));
   sinDif('6) ia: coincide con las reglas portadas de la web', pcs, esperadas);
-  t('6) ia: sin conflictos (no se añadieron campos ajenos)', r.conflictos.length === 0);
+  // Antes esta prueba exigía 0 conflictos y así ocultaba el cambio de lado cocina–baño (auditoría P0, riesgo 1).
+  t('6) ia: un único conflicto, el del lado cocina–baño', r.conflictos.length === 1 && r.conflictos[0].includes('cocina–bano'));
 }
 
 // ── 7. Cambio geométrico en dialecto web: recalcula con ini/fin e ids numéricos ──
@@ -244,6 +245,47 @@ for (const [n, p] of [['real 1', PLANO_REAL_1], ['web', PLANO_WEB]] as const) {
   const e = cargar(clon(p));
   const invertida = { ...e.planta, modulos: [...e.planta.modulos].reverse() };
   t(`15) ${n}: espacios en orden inverso no cuentan como cambio geométrico`, exportarPlano(invertida).paredesRecalculadas === false);
+}
+
+// ── 16. Cambio de lado de una pared que ya existía: se detecta y se comunica ──
+{
+  // Caso exacto de la auditoría: plano real 1, alejar la recámara; cocina–baño pasa de norte a sur.
+  const r = exportarPlano(run(cargar(clon(PLANO_REAL_1)), { type: 'moverModulo', id: 'recamara', x: 20, z: 0 }).planta);
+  const cb = (r.plano as any).paredes_compartidas.find((c: any) => c.modulo_a === 'cocina' && c.modulo_b === 'bano');
+  const aviso = r.conflictos.find(c => c.includes('cocina–bano'));
+  t('16) real 1: se exporta el lado de la geometría (sur)', cb?.lado === 'sur');
+  t('16) real 1: el cambio norte → sur se comunica con la pared y los dos lados',
+    !!aviso && aviso.includes('"norte"') && aviso.includes('"sur"'));
+  t('16) real 1: las paredes que no cambian de lado (este) no generan aviso', r.conflictos.length === 1);
+  t('16) real 1: una pared que desaparece por la edición no se reporta como cambio de lado',
+    !r.conflictos.some(c => c.includes('recamara')));
+
+  // Plano real 2: sala_comedor–cocina dice "sur", la geometría da "norte".
+  const r2 = exportarPlano(run(cargar(clon(PLANO_REAL_2)), { type: 'moverModulo', id: 'dormitorio', x: 20, z: 20 }).planta);
+  t('16) real 2: se comunica sala_comedor–cocina sur → norte', r2.conflictos.length === 1
+    && r2.conflictos[0].includes('sala_comedor–cocina') && r2.conflictos[0].includes('"sur"') && r2.conflictos[0].includes('"norte"'));
+
+  // La misma pared escrita desde el otro cuarto y con el lado correcto: no hay cambio, no hay aviso.
+  const invertida: any = clon(PLANO_REAL_1);
+  invertida.paredes_compartidas[2] = { modulo_a: 'bano', modulo_b: 'cocina', lado: 'norte' };
+  const r3 = exportarPlano(run(cargar(invertida), { type: 'moverModulo', id: 'recamara', x: 20, z: 0 }).planta);
+  t('16) pared escrita desde el otro cuarto con el lado correcto: sin aviso', r3.paredesRecalculadas && r3.conflictos.length === 0);
+
+  // Dialecto web: un cambio de lado real (la cocina pasa al oeste de la sala) también se comunica.
+  const r4 = exportarPlano(run(cargar(clon(PLANO_WEB)), { type: 'moverModulo', id: String(B), x: -3, z: 0 }).planta);
+  t('16) web: la cocina al otro lado de la sala se comunica este → oeste',
+    r4.conflictos.some(c => c.includes(`${A}–${B}`) && c.includes('"este"') && c.includes('"oeste"')));
+  t('16) web: los ids de esa pared siguen siendo números',
+    (r4.plano as any).paredes_compartidas.some((c: any) => c.modulo_a === A && c.modulo_b === B && c.lado === 'oeste'));
+
+  // Dialecto web con cambio geométrico SIN cambio de lado: ningún aviso (comportamiento anterior intacto).
+  const r5 = exportarPlano(run(cargar(clon(PLANO_WEB)), { type: 'fijarDimension', id: String(B), campo: 'largo', valor: 3 }).planta);
+  t('16) web: recalcular sin cambiar lados no genera avisos', r5.paredesRecalculadas && r5.conflictos.length === 0);
+
+  // Sin cambio geométrico no se recalcula ni se avisa, aunque el original traiga lados al revés.
+  const r6 = exportarPlano(cargar(clon(PLANO_REAL_1)).planta);
+  t('16) sin edición geométrica: lados originales intactos y sin avisos', !r6.paredesRecalculadas && r6.conflictos.length === 0
+    && (r6.plano as any).paredes_compartidas[2].lado === 'norte');
 }
 
 console.log(`\n${ok} pruebas OK, ${fail} fallidas`);

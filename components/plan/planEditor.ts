@@ -289,6 +289,9 @@ function sinIndefinidos<T extends object>(o: T): T {
  *    (con `ini`/`fin` solo si el original las usaba). Si no hay forma de saberlo, se conservan las
  *    originales y se informa el conflicto: no se inventa una conversión.
  *  · Lo que el editor añadió y el dialecto original no usa se exporta y se informa como conflicto.
+ *  · Si al recalcular una pared original cambia de lado, se informa como conflicto (pared, lado viejo y nuevo).
+ *  Contrato: `conflictos` vacío = exportación limpia; con algún conflicto, el resultado NO es seguro
+ *  para guardarse sin revisión: quien llame debe mostrarlos antes de guardar.
  */
 export function exportarPlano(p: Planta): ResultadoExportacion {
   const o = p.origen;
@@ -330,9 +333,23 @@ export function exportarPlano(p: Planta): ResultadoExportacion {
     conflictos.push('Cambiaron los contactos, pero no se puede saber qué forma de paredes_compartidas usa este plano: se conservaron las originales.');
     return { plano: out, dialecto: o.dialecto, paredesRecalculadas: false, conflictos };
   }
-  out.paredes_compartidas = paredesCompartidas(p).map(c => conTramo
+  const recalculadas = paredesCompartidas(p);
+  out.paredes_compartidas = recalculadas.map(c => conTramo
     ? { modulo_a: idOrig(c.modulo_a), modulo_b: idOrig(c.modulo_b), lado: c.lado, ini: c.ini, fin: c.fin }
     : { modulo_a: idOrig(c.modulo_a), modulo_b: idOrig(c.modulo_b), lado: c.lado });
+
+  // Una pared que ya existía y sigue existiendo, pero con OTRO lado: se exporta el lado de la geometría
+  // (regla de la web: norte = z menor) y se informa. Los planos de la IA suelen traer norte/sur al revés.
+  // El lado se compara desde el mismo cuarto: si el recalculo invirtió modulo_a/modulo_b, se usa el opuesto.
+  for (const po of pcsOrig as any[]) {
+    if (!po || !OPUESTO[po.lado as Lado]) continue;
+    const a = String(po.modulo_a), b = String(po.modulo_b);
+    const lados = recalculadas
+      .filter(c => (c.modulo_a === a && c.modulo_b === b) || (c.modulo_a === b && c.modulo_b === a))
+      .map(c => (c.modulo_a === a ? c.lado : OPUESTO[c.lado]));
+    if (lados.length && !lados.includes(po.lado))
+      conflictos.push(`Pared ${a}–${b}: el original dice "${po.lado}" y la geometría da "${lados[0]}"; se exporta "${lados[0]}". Revísala antes de guardar.`);
+  }
   return { plano: out, dialecto: o.dialecto, paredesRecalculadas: true, conflictos };
 }
 
