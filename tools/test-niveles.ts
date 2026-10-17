@@ -1,11 +1,12 @@
 /**
  * P1 · Niveles — acciones cambiarNivel / agregarNivel / duplicarNivel del REDUCTOR (planEditor.ts),
- * comparadas con la web (visor3d.js:6428-6466).
+ * comparadas con la web (visor3d.js:6428-6466), y el campo imagen_piso de actualizarModulo.
  * Ejecutar:  npx tsx tools/test-niveles.ts
  */
 import { Plano } from '../components/plan/planModel';
 import { EditorPlanta, editorVacio, reducirEditor, AccionEditor, contactosPlanta, planoDe, exportarPlano } from '../components/plan/planEditor';
 import { generarMaqueta } from '../components/plan/planGeometry';
+import { PLANO_REAL_1 } from '../components/plan/planosReales';
 
 declare const process: any;
 let ok = 0, fail = 0;
@@ -92,6 +93,25 @@ function unPiso() {
   const tres: Plano = { ...JSON.parse(JSON.stringify(exportarPlano(d.planta).plano)), altura_entrepiso: 3 };
   const e3 = run(editorVacio(), { type: 'cargarPlano', plano: tres }, { type: 'agregarNivel' });
   t('4) un plano con entrepiso de 3 m lo conserva al agregar pisos', (exportarPlano(e3.planta).plano as any).altura_entrepiso === 3 && e3.planta.niveles === 3);
+}
+
+// ── 5. imagen_piso en actualizarModulo ──
+{
+  const e = unPiso();
+  const id = String(e.planta.modulos[0].id);
+  const url = 'https://ejemplo.invalid/piso.jpg';
+  const r = run(e, { type: 'actualizarModulo', id, cambios: { imagen_piso: url } });
+  t('5) imagen_piso se guarda', r.planta.modulos[0].imagen_piso === url);
+  t('5) es un paso de deshacer', run(r, { type: 'deshacer' }).planta.modulos[0].imagen_piso === undefined);
+  const q = run(r, { type: 'actualizarModulo', id, cambios: { imagen_piso: null } });
+  t('5) quitar el piso lo deja en null, como la web', q.planta.modulos[0].imagen_piso === null);
+  const x = run(e, { type: 'actualizarModulo', id, cambios: { x: 99 } as any });
+  t('5) los demás campos siguen sin poder cambiarse por esta vía', x.planta.modulos[0].x === e.planta.modulos[0].x);
+  const ia = run(editorVacio(), { type: 'cargarPlano', plano: JSON.parse(JSON.stringify(PLANO_REAL_1)) });
+  const ia2 = run(ia, { type: 'actualizarModulo', id: 'cocina', cambios: { imagen_piso: url } });
+  const exp = exportarPlano(ia2.planta).plano as any;
+  t('5) un plano de la IA exporta el piso elegido y lo demás intacto',
+    exp.modulos.find((m: any) => m.id === 'cocina').imagen_piso === url && !('imagen_piso' in exp.modulos.find((m: any) => m.id === 'sala' || m.id === 'estancia')));
 }
 
 console.log(`\n${ok} pruebas OK, ${fail} fallidas`);

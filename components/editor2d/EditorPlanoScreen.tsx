@@ -13,7 +13,7 @@
  */
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
-  Alert, LayoutChangeEvent, PanResponder, Platform, Pressable, ScrollView, StyleSheet, Text, View, useWindowDimensions,
+  Alert, Image, LayoutChangeEvent, PanResponder, Platform, Pressable, ScrollView, StyleSheet, Text, View, useWindowDimensions,
 } from 'react-native';
 import type { AccionEditor, EditorPlanta } from '../plan/planEditor';
 import LienzoPlanta from './LienzoPlanta';
@@ -24,6 +24,8 @@ import { CONSTRUCCION, Contexto, ESPACIOS, Gesto, Pieza, iniciar, mismaVista, mo
 import { T } from './paleta';
 import { vanosQueSeQuitarian } from './vanosLienzo';
 import PanelVano from './PanelVano';
+import SelectorPisos from './SelectorPisos';
+import { esCuarto } from '../plan/planModel';
 
 interface Props {
   editor: EditorPlanta;
@@ -60,6 +62,7 @@ export default function EditorPlanoScreen(p: Props) {
   const [aviso, setAviso] = useState<string | null>(null);
   const [ajustesVano, setAjustesVano] = useState(false);   // panel del vano desplegado (se recuerda entre vanos)
   const [menuPisos, setMenuPisos] = useState(false);
+  const [selectorPisos, setSelectorPisos] = useState(false);   // catálogo real de pisos (1b-5)
   const reloj = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const avisar = (texto: string) => {
@@ -248,23 +251,34 @@ export default function EditorPlanoScreen(p: Props) {
 
       {/* Espacio seleccionado: mismo dato que su etiqueta en el plano */}
       {sel && (
-        <View style={s.seleccion}>
-          <View style={s.seleccionTexto}>
-            <Text style={s.seleccionNombre} numberOfLines={1}>{nombreVisible(sel)}</Text>
-            <Text style={s.seleccionMedidas} numberOfLines={3}>
-              {textoMedidas(sel)}. {notaConstruccion(sel.tipo) ?? 'Arrástralo para moverlo; el círculo lo estira.'}
-            </Text>
+        <View style={s.seleccionDos}>
+          <View style={s.seleccionFila}>
+            {sel.imagen_piso ? <Image source={{ uri: sel.imagen_piso }} style={s.miniatura} /> : null}
+            <View style={s.seleccionTexto}>
+              <Text style={s.seleccionNombre} numberOfLines={1}>{nombreVisible(sel)}</Text>
+              <Text style={s.seleccionMedidas} numberOfLines={3}>
+                {textoMedidas(sel)}. {notaConstruccion(sel.tipo) ?? 'Arrástralo para moverlo; el círculo lo estira.'}
+              </Text>
+            </View>
           </View>
-          {sel.ancho !== sel.largo && (
-            <Pressable style={({ pressed }) => [s.girar, pressed && s.pulsado]} onPress={() => despachar({ type: 'rotarModulo', id: String(sel.id) })}
-              accessibilityRole="button" accessibilityLabel="Girar 90 grados">
-              <Text style={s.girarTexto}>Girar 90°</Text>
+          <View style={s.seleccionBotones}>
+            {esCuarto(sel.tipo) && (
+              <Pressable style={({ pressed }) => [s.accion, s.accionPiso, pressed && s.pulsado]} onPress={() => setSelectorPisos(true)}
+                accessibilityRole="button">
+                <Text style={s.accionTexto}>{sel.imagen_piso ? 'Cambiar piso' : 'Colocar piso'}</Text>
+              </Pressable>
+            )}
+            {sel.ancho !== sel.largo && (
+              <Pressable style={({ pressed }) => [s.accion, pressed && s.pulsado]} onPress={() => despachar({ type: 'rotarModulo', id: String(sel.id) })}
+                accessibilityRole="button" accessibilityLabel="Girar 90 grados">
+                <Text style={s.accionTexto}>Girar 90°</Text>
+              </Pressable>
+            )}
+            <Pressable style={({ pressed }) => [s.accion, s.borrar, pressed && s.pulsado]} onPress={() => despachar({ type: 'eliminarModulo', id: String(sel.id) })}
+              accessibilityRole="button">
+              <Text style={s.borrarTexto}>Borrar</Text>
             </Pressable>
-          )}
-          <Pressable style={({ pressed }) => [s.borrar, pressed && s.pulsado]} onPress={() => despachar({ type: 'eliminarModulo', id: String(sel.id) })}
-            accessibilityRole="button">
-            <Text style={s.borrarTexto}>Borrar</Text>
-          </Pressable>
+          </View>
         </View>
       )}
 
@@ -313,6 +327,16 @@ export default function EditorPlanoScreen(p: Props) {
               </View>
             ))}
           </ScrollView>
+        </>
+      )}
+
+      {selectorPisos && sel && (
+        <>
+          <Pressable style={[StyleSheet.absoluteFill, s.velo]} onPress={() => setSelectorPisos(false)} accessibilityLabel="Cerrar pisos" />
+          <SelectorPisos nombreEspacio={nombreVisible(sel)} pisoActual={sel.imagen_piso}
+            onElegir={url => { despachar({ type: 'actualizarModulo', id: String(sel.id), cambios: { imagen_piso: url } }); setSelectorPisos(false); }}
+            onQuitar={() => { despachar({ type: 'actualizarModulo', id: String(sel.id), cambios: { imagen_piso: null } }); setSelectorPisos(false); }}
+            onCerrar={() => setSelectorPisos(false)} />
         </>
       )}
 
@@ -384,12 +408,17 @@ const s = StyleSheet.create({
   cancelarTexto: { color: T.texto, fontSize: 14, fontWeight: '600' },
   aviso: { position: 'absolute', left: 18, right: 18, bottom: 170, backgroundColor: '#2A3145', borderRadius: 12, padding: 12 },
   avisoTexto: { color: T.texto, fontSize: 14, textAlign: 'center' },
-  seleccion: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingHorizontal: 14, paddingTop: 10, backgroundColor: T.panel },
   seleccionTexto: { flex: 1 },
   seleccionNombre: { color: T.texto, fontSize: 16, fontWeight: '700' },
   seleccionMedidas: { color: T.textoSuave, fontSize: 13, marginTop: 2, fontVariant: ['tabular-nums'] },
-  girar: { minHeight: 44, paddingHorizontal: 12, borderRadius: 12, backgroundColor: T.boton, alignItems: 'center', justifyContent: 'center' },
-  girarTexto: { color: T.texto, fontSize: 14.5, fontWeight: '600' },
+  seleccionDos: { paddingHorizontal: 14, paddingTop: 10, gap: 8, backgroundColor: T.panel },
+  seleccionFila: { flexDirection: 'row', alignItems: 'center', gap: 10 },
+  miniatura: { width: 40, height: 40, borderRadius: 8, backgroundColor: '#2C3348' },
+  seleccionBotones: { flexDirection: 'row', gap: 8 },
+  accion: { flex: 1, minHeight: 44, borderRadius: 12, backgroundColor: T.boton, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 8 },
+  accionPiso: { backgroundColor: '#2D2A4A', borderWidth: 1, borderColor: T.acento },
+  accionTexto: { color: T.texto, fontSize: 14.5, fontWeight: '600' },
+  velo: { backgroundColor: '#00000066' },
   borrar: { minHeight: 44, paddingHorizontal: 16, borderRadius: 12, backgroundColor: '#3A2228', alignItems: 'center', justifyContent: 'center' },
   borrarTexto: { color: '#FCA5A5', fontSize: 15, fontWeight: '600' },
   barra: { flexDirection: 'row', gap: 10, paddingHorizontal: 14, paddingTop: 12, backgroundColor: T.panel },

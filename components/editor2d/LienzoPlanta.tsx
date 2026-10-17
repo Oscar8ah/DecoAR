@@ -5,7 +5,7 @@
  * una viga no tape "Sala 5 × 4 m"), "+" de los muros, cotas, y el asa del espacio seleccionado.
  */
 import React, { memo } from 'react';
-import { StyleSheet, Text, View } from 'react-native';
+import { Image, StyleSheet, Text, View } from 'react-native';
 import type { Planta } from '../plan/planEditor';
 import { esCuarto } from '../plan/planModel';
 import type { Modulo } from '../plan/planModel';
@@ -58,7 +58,10 @@ function LienzoPlanta({ planta, nivel, vista, ancho, alto, seleccionId, vanoSele
         return (
           <View key={String(m.id)} style={[s.espacio, { left: px, top: py, width: m.ancho * vista.escala, height: m.largo * vista.escala,
             borderColor: sel ? '#FFFFFF' : color, borderWidth: sel ? 3 : 2, backgroundColor: color + (sel ? '40' : esCuarto(m.tipo) ? '24' : '66') },
-            m.tipo === 'hueco' && s.hueco]} />
+            m.tipo === 'hueco' && s.hueco]}>
+            {/* Piso del catálogo (imagen_piso): se ve bajo la etiqueta, atenuado para que el texto se lea */}
+            {m.imagen_piso && esCuarto(m.tipo) ? <Image source={{ uri: m.imagen_piso }} style={s.pisoImagen} resizeMode="cover" /> : null}
+          </View>
         );
       })}
 
@@ -146,7 +149,8 @@ const s = StyleSheet.create({
   lienzo: { backgroundColor: T.fondo, overflow: 'hidden' },
   lineaV: { position: 'absolute', top: 0, bottom: 0, width: StyleSheet.hairlineWidth },
   lineaH: { position: 'absolute', left: 0, right: 0, height: StyleSheet.hairlineWidth },
-  espacio: { position: 'absolute', borderRadius: 2 },
+  espacio: { position: 'absolute', borderRadius: 2, overflow: 'hidden' },
+  pisoImagen: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, opacity: 0.55 },
   hueco: { borderStyle: 'dashed', backgroundColor: 'transparent' },
   referencia: { position: 'absolute', borderWidth: 1.5, borderStyle: 'dashed', borderColor: '#8A93AD' },
   etiqueta: { position: 'absolute', alignItems: 'center', justifyContent: 'center', paddingHorizontal: 4 },

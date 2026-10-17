@@ -112,7 +112,7 @@ export type AccionEditor =
   | { type: 'redimensionar'; id: string; esquina: Esquina; x: number; z: number }  // posición del dedo
   | { type: 'fijarDimension'; id: string; campo: 'ancho' | 'largo' | 'alto'; valor: number }
   | { type: 'rotarModulo'; id: string }
-  | { type: 'actualizarModulo'; id: string; cambios: Partial<Pick<Modulo, 'nombre' | 'material_piso' | 'color_pared'>> }
+  | { type: 'actualizarModulo'; id: string; cambios: Partial<Pick<Modulo, 'nombre' | 'material_piso' | 'color_pared' | 'imagen_piso'>> }
   | { type: 'eliminarModulo'; id: string }
   | { type: 'crearVanoEnContacto'; contacto: Contacto }
   | { type: 'ponerPuertaLibre'; x: number; z: number; tolerancia?: number }
@@ -537,7 +537,8 @@ function aplicar(e: EditorPlanta, a: AccionEditor): EditorPlanta {
     case 'rotarModulo':   // visor3d.js:8126-8136: solo intercambia ancho y largo
       return conModulo(e, a.id, m => ({ ...m, ancho: m.largo, largo: m.ancho }));
     case 'actualizarModulo': {
-      const permitidos = ['nombre', 'material_piso', 'color_pared'];
+      // imagen_piso: URL de la imagen del producto, como la web al elegir un piso del catálogo (visor3d.js:8110, 8354)
+      const permitidos = ['nombre', 'material_piso', 'color_pared', 'imagen_piso'];
       const cambios = Object.fromEntries(Object.entries(a.cambios).filter(([k]) => permitidos.includes(k)));
       return conModulo(e, a.id, m => ({ ...m, ...cambios }));
     }
