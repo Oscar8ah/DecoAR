@@ -41,6 +41,37 @@ export const ESPACIOS: Pieza[] = [
   { etiqueta: '📦 Zona', tipo: 'zona' },
 ];
 
+/** Estado en la maqueta 3D, comprobado con generarMaqueta (planGeometry.ts) en tools/test-estructuras.ts. */
+export type Estado3D = 'si' | 'parcial' | 'no';
+export interface PiezaConstruccion extends Pieza { grupo: string; estado3D: Estado3D; nota3D: string }
+
+/**
+ * Botón "Agregar objetos de construcción": los mismos grupos que la web (lista general: pared y vidrio;
+ * Estructura: columna, viga, baranda, hueco, escalera; Exteriores: piso exterior). La zona ya está en
+ * "Colocar espacio". El plafón y la cubierta van en la capa Techo de la web: no están aquí.
+ */
+export const CONSTRUCCION: PiezaConstruccion[] = [
+  { grupo: 'Muros', etiqueta: '🧱 Pared', tipo: 'pared', estado3D: 'si', nota3D: 'Se ve en 3D.' },
+  { grupo: 'Muros', etiqueta: '🪟 Vidrio', tipo: 'vidrio', estado3D: 'no', nota3D: 'Aún no se ve en 3D.' },
+  { grupo: 'Estructura', etiqueta: '🏛️ Columna', tipo: 'columna', estado3D: 'si', nota3D: 'Va de piso a techo. Se ve en 3D.' },
+  { grupo: 'Estructura', etiqueta: '🪵 Viga', tipo: 'viga', estado3D: 'si', nota3D: 'Cuelga del techo (base a 2,20 m, 0,40 m de alto). Se ve en 3D.' },
+  { grupo: 'Estructura', etiqueta: '🚧 Baranda', tipo: 'baranda', estado3D: 'no', nota3D: 'Aún no se ve en 3D.' },
+  { grupo: 'Estructura', etiqueta: '⬚ Hueco', tipo: 'hueco', estado3D: 'parcial', nota3D: 'En un piso alto recorta su piso en 3D; en el primer piso no se ve.' },
+  { grupo: 'Estructura', etiqueta: '🪜 Escalera', tipo: 'escalera', estado3D: 'no', nota3D: 'Aún no se ve en 3D.' },
+  { grupo: 'Exteriores', etiqueta: '🟫 Piso exterior', tipo: 'exterior', nombre: '🟫 Piso exterior', estado3D: 'no',
+    nota3D: 'Andén, losa, patio o zona verde alrededor de la casa: va sobre el suelo, no levanta muros ni suma área. Aún no se ve en 3D.' },
+];
+
+/** Nota 3D del tipo de un elemento ya colocado (null si es un cuarto). */
+export const notaConstruccion = (tipo: string | null | undefined) => CONSTRUCCION.find(c => c.tipo === tipo)?.nota3D ?? null;
+
+/**
+ * Piezas delgadas sin círculo de estirar: el reductor (como la web, visor3d.js:7753) no deja nada por
+ * debajo de 1 m al estirar, así que una columna de 0,30 m saltaría a 1 × 1 m. Se giran con "Girar 90°".
+ */
+export const SIN_ESTIRAR = new Set(['pared', 'vidrio', 'columna', 'viga', 'baranda']);
+export const puedeEstirar = (m: Pick<Modulo, 'tipo'>) => !SIN_ESTIRAR.has(m.tipo ?? '');
+
 export type Objetivo =
   | { tipo: 'asa'; id: string } | { tipo: 'modulo'; id: string }
   | { tipo: 'mas'; contacto: Contacto } | { tipo: 'vano'; id: string } | { tipo: 'vacio' };
@@ -94,7 +125,7 @@ export function vanoBajoDedo(v: Vista, p: Planta, nivel: number, px: number, py:
 export function queToca(v: Vista, p: Planta, nivel: number, sel: Seleccion, px: number, py: number): Objetivo {
   if (sel?.tipo === 'modulo') {
     const m = modulosDelNivel(p, nivel).find(x => String(x.id) === sel.id);
-    if (m) { const a = posicionAsa(v, m); if (Math.hypot(px - a.px, py - a.py) <= RADIO_ASA) return { tipo: 'asa', id: String(m.id) }; }
+    if (m && puedeEstirar(m)) { const a = posicionAsa(v, m); if (Math.hypot(px - a.px, py - a.py) <= RADIO_ASA) return { tipo: 'asa', id: String(m.id) }; }
   }
   let mas: { b: ReturnType<typeof botonesMas>[number]; d: number } | null = null;
   for (const b of botonesMas(p, nivel)) {

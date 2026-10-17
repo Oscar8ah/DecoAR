@@ -91,7 +91,8 @@ t('4) una etiqueta no se dibuja si no cabe', !etiquetaCabe(30, 30).nombre && eti
     por.estancia === 'sala' && por.cocina === 'cocina' && por.bano === 'bano' && por.recamara === 'habitacion' && por.area_lavado === 'zona');
   t('5) deducir el tipo no lo escribe en el plano', e.planta.modulos.every(m => !('tipo' in m)));
   t('5) si el módulo trae tipo, manda el tipo', tipoVisual({ id: 'a', tipo: 'bano', nombre: 'Sala grande', x: 0, z: 0, ancho: 1, largo: 1 }) === 'bano');
-  t('5) estructura en gris y cuartos con color propio', colorTipo('columna') === '#6B7280' && colorTipo('sala') !== colorTipo('cocina'));
+  t('5) cada pieza de construcción con su color, gris si no tiene uno (plafón), y cuartos con color propio',
+    colorTipo('columna') === '#A8A29E' && colorTipo('hueco') !== colorTipo('pared') && colorTipo('plafon') === '#6B7280' && colorTipo('sala') !== colorTipo('cocina'));
 }
 
 // ── 6. Vanos sobre su muro ──

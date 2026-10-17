@@ -1,7 +1,7 @@
 /**
  * Pantalla del editor de plano 2D — Etapa 1, entrega 1b-1.
  *   · Sin cámara ni AR: este archivo y todo lo que importa son React Native puro.
- *   · "Colocar espacio" → elegir tipo → tocar el plano donde va.
+ *   · "Colocar espacio" o "Construcción" → elegir tipo → tocar el plano donde va.
  *   · Tocar selecciona; arrastrar mueve; el círculo estira; arrastrar el fondo desplaza la vista.
  *   · + y − acercan y alejan alrededor del centro del lienzo.
  *   · "+" en cada muro compartido crea un vano; tocar un vano lo selecciona (Arco / Vano / Puerta,
@@ -13,14 +13,14 @@
  */
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
-  Alert, LayoutChangeEvent, PanResponder, Platform, Pressable, StyleSheet, Text, View, useWindowDimensions,
+  Alert, LayoutChangeEvent, PanResponder, Platform, Pressable, ScrollView, StyleSheet, Text, View, useWindowDimensions,
 } from 'react-native';
 import type { AccionEditor, EditorPlanta } from '../plan/planEditor';
 import LienzoPlanta from './LienzoPlanta';
 import {
   PASO_ZOOM, Vista, encuadrar, metros, modulosDelNivel, nombreVisible, puedeAcercar, puedeAlejar, resumen, textoMedidas, zoomVista,
 } from './vistaLienzo';
-import { Contexto, ESPACIOS, Gesto, Pieza, iniciar, mismaVista, mover, terminar } from './gestosLienzo';
+import { CONSTRUCCION, Contexto, ESPACIOS, Gesto, Pieza, iniciar, mismaVista, mover, notaConstruccion, terminar } from './gestosLienzo';
 import { T } from './paleta';
 import { vanosQueSeQuitarian } from './vanosLienzo';
 import PanelVano from './PanelVano';
@@ -55,6 +55,7 @@ export default function EditorPlanoScreen(p: Props) {
   const [vista, setVista] = useState<Vista | null>(null);
   const [colocar, setColocar] = useState<Pieza | null>(null);
   const [lista, setLista] = useState(false);
+  const [listaObras, setListaObras] = useState(false);   // "Agregar objetos de construcción"
   const [menu, setMenu] = useState(false);
   const [aviso, setAviso] = useState<string | null>(null);
   const [ajustesVano, setAjustesVano] = useState(false);   // panel del vano desplegado (se recuerda entre vanos)
@@ -122,7 +123,7 @@ export default function EditorPlanoScreen(p: Props) {
     if (Math.abs(width - lienzo.ancho) > 0.5 || Math.abs(height - lienzo.alto) > 0.5) setLienzo({ ancho: width, alto: height });
   };
 
-  const elegirEspacio = (pz: Pieza) => { setLista(false); setColocar(pz); despachar({ type: 'seleccionar', seleccion: null }); };
+  const elegirEspacio = (pz: Pieza) => { setLista(false); setListaObras(false); setColocar(pz); despachar({ type: 'seleccionar', seleccion: null }); };
 
   const planoNuevo = () => {
     setMenu(false);
@@ -153,17 +154,6 @@ export default function EditorPlanoScreen(p: Props) {
           <Text style={s.titulo} numberOfLines={1}>{p.titulo}</Text>
           <Text style={s.subtitulo} numberOfLines={1}>{subtitulo}</Text>
         </View>
-        <Pressable style={s.redondo} onPress={() => setMenu(v => !v)} accessibilityLabel="Más opciones" hitSlop={8}>
-          <Text style={s.redondoTexto}>⋯</Text>
-        </Pressable>
-      </View>
-
-      {/* Herramientas: colocar espacio, deshacer, rehacer */}
-      <View style={s.herramientas}>
-        <Pressable style={({ pressed }) => [s.colocar, pressed && s.pulsado]} onPress={() => setLista(v => !v)} accessibilityRole="button">
-          <Text style={s.colocarTexto}>Colocar espacio</Text>
-        </Pressable>
-        <View style={s.hueco} />
         <Pressable style={[s.redondo, !puedeDeshacer && s.inactivo]} disabled={!puedeDeshacer}
           onPress={() => despachar({ type: 'deshacer' })} accessibilityLabel="Deshacer" hitSlop={6}>
           <Text style={s.redondoTexto}>↶</Text>
@@ -171,6 +161,20 @@ export default function EditorPlanoScreen(p: Props) {
         <Pressable style={[s.redondo, !puedeRehacer && s.inactivo]} disabled={!puedeRehacer}
           onPress={() => despachar({ type: 'rehacer' })} accessibilityLabel="Rehacer" hitSlop={6}>
           <Text style={s.redondoTexto}>↷</Text>
+        </Pressable>
+        <Pressable style={s.redondo} onPress={() => setMenu(v => !v)} accessibilityLabel="Más opciones" hitSlop={8}>
+          <Text style={s.redondoTexto}>⋯</Text>
+        </Pressable>
+      </View>
+
+      {/* Herramientas: espacios y objetos de construcción */}
+      <View style={s.herramientas}>
+        <Pressable style={({ pressed }) => [s.colocar, pressed && s.pulsado]} onPress={() => { setListaObras(false); setLista(v => !v); }} accessibilityRole="button">
+          <Text style={s.colocarTexto}>Colocar espacio</Text>
+        </Pressable>
+        <Pressable style={({ pressed }) => [s.obras, pressed && s.pulsado]} onPress={() => { setLista(false); setListaObras(v => !v); }}
+          accessibilityRole="button" accessibilityLabel="Agregar objetos de construcción">
+          <Text style={s.obrasTexto}>Construcción</Text>
         </Pressable>
       </View>
 
@@ -247,8 +251,16 @@ export default function EditorPlanoScreen(p: Props) {
         <View style={s.seleccion}>
           <View style={s.seleccionTexto}>
             <Text style={s.seleccionNombre} numberOfLines={1}>{nombreVisible(sel)}</Text>
-            <Text style={s.seleccionMedidas} numberOfLines={2}>{textoMedidas(sel)}. Arrástralo para moverlo; el círculo lo estira.</Text>
+            <Text style={s.seleccionMedidas} numberOfLines={3}>
+              {textoMedidas(sel)}. {notaConstruccion(sel.tipo) ?? 'Arrástralo para moverlo; el círculo lo estira.'}
+            </Text>
           </View>
+          {sel.ancho !== sel.largo && (
+            <Pressable style={({ pressed }) => [s.girar, pressed && s.pulsado]} onPress={() => despachar({ type: 'rotarModulo', id: String(sel.id) })}
+              accessibilityRole="button" accessibilityLabel="Girar 90 grados">
+              <Text style={s.girarTexto}>Girar 90°</Text>
+            </Pressable>
+          )}
           <Pressable style={({ pressed }) => [s.borrar, pressed && s.pulsado]} onPress={() => despachar({ type: 'eliminarModulo', id: String(sel.id) })}
             accessibilityRole="button">
             <Text style={s.borrarTexto}>Borrar</Text>
@@ -282,6 +294,25 @@ export default function EditorPlanoScreen(p: Props) {
               </Pressable>
             ))}
           </View>
+        </>
+      )}
+
+      {listaObras && (
+        <>
+          <Pressable style={StyleSheet.absoluteFill} onPress={() => setListaObras(false)} accessibilityLabel="Cerrar construcción" />
+          <ScrollView style={[s.lista, s.listaObras, { top: m.arriba + 108 }]} contentContainerStyle={{ gap: 8 }}>
+            {['Muros', 'Estructura', 'Exteriores'].map(g => (
+              <View key={g} style={{ gap: 8 }}>
+                <Text style={s.grupo}>{g.toUpperCase()}</Text>
+                {CONSTRUCCION.filter(c => c.grupo === g).map(c => (
+                  <Pressable key={c.tipo} style={({ pressed }) => [s.obra, pressed && s.pulsado]} onPress={() => elegirEspacio(c)} accessibilityRole="button">
+                    <Text style={s.piezaTexto}>{c.etiqueta}</Text>
+                    <Text style={[s.estado3D, c.estado3D === 'si' ? s.si3D : c.estado3D === 'parcial' ? s.parcial3D : s.no3D]}>{c.nota3D}</Text>
+                  </Pressable>
+                ))}
+              </View>
+            ))}
+          </ScrollView>
         </>
       )}
 
@@ -321,14 +352,16 @@ function Boton({ texto, onPress, principal, inactivo }: { texto: string; onPress
 
 const s = StyleSheet.create({
   pantalla: { flex: 1, backgroundColor: T.panel },
-  cabecera: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 18, paddingBottom: 10 },
-  cabeceraTexto: { flex: 1, paddingRight: 12 },
+  cabecera: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 18, paddingBottom: 10 },
+  cabeceraTexto: { flex: 1, paddingRight: 4 },
   titulo: { color: T.texto, fontSize: 20, fontWeight: '700' },
   subtitulo: { color: T.textoSuave, fontSize: 13, marginTop: 3, fontVariant: ['tabular-nums'] },
   herramientas: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingHorizontal: 14, paddingBottom: 12 },
   colocar: { minHeight: 42, borderRadius: 12, backgroundColor: T.acento, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 16 },
   colocarTexto: { color: '#FFFFFF', fontSize: 15, fontWeight: '700' },
-  hueco: { flex: 1 },
+  obras: { minHeight: 42, borderRadius: 12, backgroundColor: T.boton, borderWidth: 1, borderColor: '#4A5268', alignItems: 'center',
+    justifyContent: 'center', paddingHorizontal: 16 },
+  obrasTexto: { color: T.texto, fontSize: 15, fontWeight: '700' },
   zoom: { position: 'absolute', right: 12, bottom: 12, gap: 8 },
   zoomBoton: { width: 46, height: 46, borderRadius: 23, backgroundColor: '#222838E6', borderWidth: 1, borderColor: '#39415A',
     alignItems: 'center', justifyContent: 'center' },
@@ -355,6 +388,8 @@ const s = StyleSheet.create({
   seleccionTexto: { flex: 1 },
   seleccionNombre: { color: T.texto, fontSize: 16, fontWeight: '700' },
   seleccionMedidas: { color: T.textoSuave, fontSize: 13, marginTop: 2, fontVariant: ['tabular-nums'] },
+  girar: { minHeight: 44, paddingHorizontal: 12, borderRadius: 12, backgroundColor: T.boton, alignItems: 'center', justifyContent: 'center' },
+  girarTexto: { color: T.texto, fontSize: 14.5, fontWeight: '600' },
   borrar: { minHeight: 44, paddingHorizontal: 16, borderRadius: 12, backgroundColor: '#3A2228', alignItems: 'center', justifyContent: 'center' },
   borrarTexto: { color: '#FCA5A5', fontSize: 15, fontWeight: '600' },
   barra: { flexDirection: 'row', gap: 10, paddingHorizontal: 14, paddingTop: 12, backgroundColor: T.panel },
@@ -365,6 +400,13 @@ const s = StyleSheet.create({
   botonTexto: { color: T.texto, fontSize: 15, fontWeight: '600' },
   lista: { position: 'absolute', left: 14, right: 14, flexDirection: 'row', flexWrap: 'wrap', gap: 8,
     backgroundColor: '#20263A', borderRadius: 16, padding: 10 },
+  listaObras: { maxHeight: 460, flexDirection: 'column', flexWrap: 'nowrap' },
+  grupo: { color: T.textoSuave, fontSize: 12.5, fontWeight: '700', letterSpacing: 0.8, marginTop: 4, marginLeft: 4 },
+  obra: { minHeight: 52, borderRadius: 12, backgroundColor: T.boton, justifyContent: 'center', paddingHorizontal: 14, paddingVertical: 8 },
+  estado3D: { fontSize: 12.5, marginTop: 3 },
+  si3D: { color: '#86EFAC' },
+  parcial3D: { color: '#FCD34D' },
+  no3D: { color: T.textoSuave },
   pieza: { width: '48.5%', minHeight: 50, borderRadius: 12, backgroundColor: T.boton, justifyContent: 'center', paddingHorizontal: 14 },
   piezaTexto: { color: T.texto, fontSize: 16 },
   menu: { position: 'absolute', right: 14, width: 270, backgroundColor: '#20263A', borderRadius: 14, paddingVertical: 6 },

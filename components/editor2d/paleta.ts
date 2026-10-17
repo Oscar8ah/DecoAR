@@ -11,9 +11,17 @@ const POR_TIPO: Record<string, string> = {
   bano: '#67E8F9', pasillo: '#D1D5DB', otro: '#A7F3D0',
 };
 const ESTRUCTURA = '#6B7280';
+/**
+ * Objetos de construcción: un color por tipo para distinguirlos en el plano 2D. (La maqueta de E2 los
+ * pinta todos en gris; aquí se separan porque en el plano conviven muchos y hay que reconocerlos.)
+ */
+const POR_ESTRUCTURA: Record<string, string> = {
+  pared: '#CBD5E1', vidrio: '#7DD3FC', columna: '#A8A29E', viga: '#D6A15C', baranda: '#FBBF24',
+  hueco: '#F87171', escalera: '#FB923C', exterior: '#84CC16',
+};
 
 /** Color base de un espacio según su tipo visual (ver tipoVisual en vistaLienzo.ts). */
-export const colorTipo = (tipo: string) => (esCuarto(tipo) ? POR_TIPO[tipo] ?? POR_TIPO.otro : ESTRUCTURA);
+export const colorTipo = (tipo: string) => (esCuarto(tipo) ? POR_TIPO[tipo] ?? POR_TIPO.otro : POR_ESTRUCTURA[tipo] ?? ESTRUCTURA);
 
 /** Colores de la web (visor3d.js:7565): arco verde, vano celeste, puerta naranja. Ventana: extensión de DecoAR. */
 const POR_VANO: Record<string, string> = { arco: '#22C55E', vano: '#38BDF8', puerta: '#F59E0B', ventana: '#67E8F9' };

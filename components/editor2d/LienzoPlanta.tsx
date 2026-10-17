@@ -15,7 +15,7 @@ import {
 } from './vistaLienzo';
 import { T, colorMas, colorTipo, colorVano } from './paleta';
 import { botonesMas } from './vanosLienzo';
-import { posicionAsa } from './gestosLienzo';
+import { posicionAsa, puedeEstirar } from './gestosLienzo';
 
 const TAM_ASA = 24;   // pt dibujados; se agarra en 44 pt (RADIO_ASA en gestosLienzo.ts)
 const TAM_MAS = 22;   // pt dibujados; se toca en 44 pt (RADIO_MAS en gestosLienzo.ts)
@@ -57,7 +57,8 @@ function LienzoPlanta({ planta, nivel, vista, ancho, alto, seleccionId, vanoSele
         const sel = String(m.id) === seleccionId;
         return (
           <View key={String(m.id)} style={[s.espacio, { left: px, top: py, width: m.ancho * vista.escala, height: m.largo * vista.escala,
-            borderColor: sel ? '#FFFFFF' : color, borderWidth: sel ? 3 : 2, backgroundColor: color + (sel ? '40' : '24') }]} />
+            borderColor: sel ? '#FFFFFF' : color, borderWidth: sel ? 3 : 2, backgroundColor: color + (sel ? '40' : esCuarto(m.tipo) ? '24' : '66') },
+            m.tipo === 'hueco' && s.hueco]} />
         );
       })}
 
@@ -108,7 +109,7 @@ function LienzoPlanta({ planta, nivel, vista, ancho, alto, seleccionId, vanoSele
 
       {(() => {
         const m = mods.find(x => String(x.id) === seleccionId);
-        if (!m) return null;
+        if (!m || !puedeEstirar(m)) return null;
         const a = posicionAsa(vista, m);
         return <View style={[s.asa, { left: a.px - TAM_ASA / 2, top: a.py - TAM_ASA / 2 }]} />;
       })()}
@@ -146,6 +147,7 @@ const s = StyleSheet.create({
   lineaV: { position: 'absolute', top: 0, bottom: 0, width: StyleSheet.hairlineWidth },
   lineaH: { position: 'absolute', left: 0, right: 0, height: StyleSheet.hairlineWidth },
   espacio: { position: 'absolute', borderRadius: 2 },
+  hueco: { borderStyle: 'dashed', backgroundColor: 'transparent' },
   referencia: { position: 'absolute', borderWidth: 1.5, borderStyle: 'dashed', borderColor: '#8A93AD' },
   etiqueta: { position: 'absolute', alignItems: 'center', justifyContent: 'center', paddingHorizontal: 4 },
   asa: { position: 'absolute', width: TAM_ASA, height: TAM_ASA, borderRadius: TAM_ASA / 2, backgroundColor: T.acento, borderWidth: 3, borderColor: '#FFFFFF' },
