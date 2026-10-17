@@ -1,13 +1,14 @@
 /**
  * Lienzo del plano 2D. Dibuja con Views de React Native: no hay cámara, ni Viro, ni dependencias nuevas.
  * Solo DIBUJA (pointerEvents="none"): los gestos los recibe la pantalla y los traduce gestosLienzo.ts.
- * Capas, de abajo arriba: cuadrícula, cuartos, estructura, vanos, ETIQUETAS (encima de todo, para que
+ * Capas, de abajo arriba: cuadrícula, piso de abajo punteado (guía), cuartos, estructura, vanos, ETIQUETAS (encima de todo, para que
  * una viga no tape "Sala 5 × 4 m"), "+" de los muros, cotas, y el asa del espacio seleccionado.
  */
 import React, { memo } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
 import type { Planta } from '../plan/planEditor';
 import { esCuarto } from '../plan/planModel';
+import type { Modulo } from '../plan/planModel';
 import {
   ALTO_TEXTO_COTA, Vista, aPantalla, cotasGenerales, cuadricula, etiquetaCabe, extension, modulosDelNivel,
   nombreVisible, textoMedidas, tipoVisual, tramoVano, vanosDelNivel,
@@ -25,9 +26,11 @@ interface Props {
   vanoSeleccionadoId?: string | null;
   /** Vanos entre espacios que ya no se tocan: se quitarán al generar el 3D (se dibujan atenuados). */
   vanosHuerfanos?: Set<string>;
+  /** Piso de abajo, punteado y sin rellenar, solo como guía para alinear (no se puede tocar ni editar). */
+  referencia?: Modulo[];
 }
 
-function LienzoPlanta({ planta, nivel, vista, ancho, alto, seleccionId, vanoSeleccionadoId, vanosHuerfanos }: Props) {
+function LienzoPlanta({ planta, nivel, vista, ancho, alto, seleccionId, vanoSeleccionadoId, vanosHuerfanos, referencia }: Props) {
   const mods = modulosDelNivel(planta, nivel);
   // Cuartos primero; columnas, vigas y demás estructura encima, para que no queden tapadas.
   const ordenados = [...mods.filter(m => esCuarto(m.tipo)), ...mods.filter(m => !esCuarto(m.tipo))];
@@ -42,6 +45,11 @@ function LienzoPlanta({ planta, nivel, vista, ancho, alto, seleccionId, vanoSele
       {red.horizontales.map((l, i) => (
         <View key={`h${i}`} style={[s.lineaH, { top: l.pos, backgroundColor: l.fuerte ? T.lineaFuerte : T.linea }]} />
       ))}
+
+      {(referencia ?? []).map(m => {
+        const { px, py } = aPantalla(vista, m.x, m.z);
+        return <View key={`ref${String(m.id)}`} style={[s.referencia, { left: px, top: py, width: m.ancho * vista.escala, height: m.largo * vista.escala }]} />;
+      })}
 
       {ordenados.map(m => {
         const { px, py } = aPantalla(vista, m.x, m.z);
@@ -138,6 +146,7 @@ const s = StyleSheet.create({
   lineaV: { position: 'absolute', top: 0, bottom: 0, width: StyleSheet.hairlineWidth },
   lineaH: { position: 'absolute', left: 0, right: 0, height: StyleSheet.hairlineWidth },
   espacio: { position: 'absolute', borderRadius: 2 },
+  referencia: { position: 'absolute', borderWidth: 1.5, borderStyle: 'dashed', borderColor: '#8A93AD' },
   etiqueta: { position: 'absolute', alignItems: 'center', justifyContent: 'center', paddingHorizontal: 4 },
   asa: { position: 'absolute', width: TAM_ASA, height: TAM_ASA, borderRadius: TAM_ASA / 2, backgroundColor: T.acento, borderWidth: 3, borderColor: '#FFFFFF' },
   nombre: { color: T.texto, fontSize: 15, fontWeight: '600', textShadowColor: '#000000AA', textShadowRadius: 3 },

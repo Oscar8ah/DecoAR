@@ -121,6 +121,10 @@ export type AccionEditor =
   | { type: 'duplicarVano'; id: string }
   | { type: 'borrarVano'; id: string }
   | { type: 'convertir' }
+  // Pisos (visor3d.js:6428-6466). Autorizado por el propietario para P1 (niveles).
+  | { type: 'cambiarNivel'; delta: number }
+  | { type: 'agregarNivel' }
+  | { type: 'duplicarNivel' }
   | { type: 'cargarPlano'; plano: Plano }
   | { type: 'seleccionar'; seleccion: Seleccion }
   | { type: 'iniciarGesto' }
@@ -355,7 +359,7 @@ export function exportarPlano(p: Planta): ResultadoExportacion {
 
 // ───────────────────────────── Reductor ─────────────────────────────
 /** Acciones que solo cambian la vista, sin entrar al historial. */
-const SIN_HISTORIAL = new Set(['seleccionar', 'iniciarGesto', 'terminarGesto', 'deshacer', 'rehacer', 'cargarPlano']);
+const SIN_HISTORIAL = new Set(['seleccionar', 'iniciarGesto', 'terminarGesto', 'deshacer', 'rehacer', 'cargarPlano', 'cambiarNivel']);
 
 export function reducirEditor(e: EditorPlanta, a: AccionEditor): EditorPlanta {
   const limpio = { ...e, mensaje: null };
@@ -384,7 +388,10 @@ function terminarGesto(e: EditorPlanta): EditorPlanta {
   return confirmar({ ...e, fotoGesto: null }, e.fotoGesto);
 }
 
-function conSeleccionValida(e: EditorPlanta): EditorPlanta {
+function conSeleccionValida(e0: EditorPlanta): EditorPlanta {
+  // Deshacer "Agregar piso" puede quitar el piso que estaba activo: se vuelve al último que existe.
+  const ultimo = Math.max(0, (e0.planta.niveles || 1) - 1);
+  const e = e0.nivelActivo > ultimo ? { ...e0, nivelActivo: ultimo, seleccion: null } : e0;
   const s = e.seleccion;
   if (!s) return e;
   const existe = s.tipo === 'modulo' ? e.planta.modulos.some(m => String(m.id) === s.id) : e.planta.vanos.some(v => String(v.id) === s.id);
@@ -613,6 +620,32 @@ function aplicar(e: EditorPlanta, a: AccionEditor): EditorPlanta {
     }
 
     // ── Convertir a 3D ──
+    // ── Pisos: igual que la web (visor3d.js:6428-6466) ──
+    case 'cambiarNivel': {
+      const nuevo = e.nivelActivo + a.delta;
+      if (nuevo < 0) return { ...e, mensaje: 'Ya estás en el primer piso' };
+      if (nuevo >= (p.niveles || 1)) return { ...e, mensaje: 'No hay más pisos: usa "Agregar piso"' };
+      return { ...e, nivelActivo: nuevo, seleccion: null };
+    }
+    case 'agregarNivel': {   // el piso nuevo va arriba de todos y queda activo
+      const niveles = (p.niveles || 1) + 1;
+      return { ...e, nivelActivo: niveles - 1, seleccion: null, planta: { ...p, niveles },
+        mensaje: `Piso ${niveles} creado: el de abajo se ve punteado para alinear` };
+    }
+    case 'duplicarNivel': {  // copia los ESPACIOS del piso actual (no los vanos, como la web) a un piso nuevo arriba de todos
+      const origen = p.modulos.filter(m => (m.nivel || 0) === e.nivelActivo);
+      if (!origen.length) return { ...e, mensaje: 'Este piso está vacío' };
+      const niveles = (p.niveles || 1) + 1, destino = niveles - 1;
+      let cur: EditorPlanta = e;
+      const copias: Modulo[] = [];
+      for (const m of origen) {
+        const { id, contador } = nuevoId({ ...cur, planta: { ...p, modulos: [...p.modulos, ...copias] } }, 'm');
+        cur = { ...cur, contador };
+        copias.push({ ...JSON.parse(JSON.stringify(m)), id, nivel: destino });   // copia profunda: nada compartido
+      }
+      return { ...cur, nivelActivo: destino, seleccion: null, planta: { ...p, niveles, modulos: [...p.modulos, ...copias] },
+        mensaje: `Piso ${destino + 1} copiado del ${destino}: ${origen.length} elemento${origen.length === 1 ? '' : 's'}` };
+    }
     case 'convertir': {
       if (!p.modulos.length) return { ...e, mensaje: 'Agrega al menos un espacio' };
       let contador = e.contador;

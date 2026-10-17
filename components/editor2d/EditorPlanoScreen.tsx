@@ -58,6 +58,7 @@ export default function EditorPlanoScreen(p: Props) {
   const [menu, setMenu] = useState(false);
   const [aviso, setAviso] = useState<string | null>(null);
   const [ajustesVano, setAjustesVano] = useState(false);   // panel del vano desplegado (se recuerda entre vanos)
+  const [menuPisos, setMenuPisos] = useState(false);
   const reloj = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const avisar = (texto: string) => {
@@ -151,7 +152,6 @@ export default function EditorPlanoScreen(p: Props) {
         <View style={s.cabeceraTexto}>
           <Text style={s.titulo} numberOfLines={1}>{p.titulo}</Text>
           <Text style={s.subtitulo} numberOfLines={1}>{subtitulo}</Text>
-          {r.niveles > 1 && <Text style={s.subtitulo} numberOfLines={1}>Nivel {nivel + 1} de {r.niveles}. Los demás niveles se conservan sin cambios.</Text>}
         </View>
         <Pressable style={s.redondo} onPress={() => setMenu(v => !v)} accessibilityLabel="Más opciones" hitSlop={8}>
           <Text style={s.redondoTexto}>⋯</Text>
@@ -180,9 +180,39 @@ export default function EditorPlanoScreen(p: Props) {
           {vista && lienzo.ancho > 0 && (
             <LienzoPlanta planta={editor.planta} nivel={nivel} vista={vista} ancho={lienzo.ancho} alto={lienzo.alto}
               seleccionId={sel ? String(sel.id) : null} vanoSeleccionadoId={vanoSel ? String(vanoSel.id) : null}
-              vanosHuerfanos={huerfanos} />
+              vanosHuerfanos={huerfanos} referencia={nivel > 0 ? modulosDelNivel(editor.planta, nivel - 1) : undefined} />
           )}
         </View>
+        {/* Pisos: "Piso 1 de 1 ▾" y su menú (visor3d.js:6428-6470) */}
+        {!colocar && (
+          <Pressable style={({ pressed }) => [s.piso, pressed && s.pulsado]} onPress={() => setMenuPisos(v => !v)}
+            accessibilityRole="button" accessibilityLabel={`Piso ${nivel + 1} de ${r.niveles}. Cambiar o agregar pisos`}>
+            <Text style={s.pisoTexto}>Piso {nivel + 1} de {r.niveles} {menuPisos ? '▴' : '▾'}</Text>
+          </Pressable>
+        )}
+        {menuPisos && !colocar && (
+          <>
+            <Pressable style={StyleSheet.absoluteFill} onPress={() => setMenuPisos(false)} accessibilityLabel="Cerrar pisos" />
+            <View style={s.menuPisos}>
+              {Array.from({ length: r.niveles }, (_, i) => r.niveles - 1 - i).map(i => (
+                <Pressable key={i} style={({ pressed }) => [s.opcionPiso, i === nivel && s.opcionPisoActiva, pressed && s.pulsado]}
+                  onPress={() => { setMenuPisos(false); if (i !== nivel) despachar({ type: 'cambiarNivel', delta: i - nivel }); }}>
+                  <Text style={s.opcionTexto}>Piso {i + 1}{i === nivel ? '  (viendo)' : ''}</Text>
+                  <Text style={s.opcionNota}>{modulosDelNivel(editor.planta, i).length} elementos</Text>
+                </Pressable>
+              ))}
+              <View style={s.separador} />
+              <Pressable style={({ pressed }) => [s.opcionPiso, pressed && s.pulsado]} onPress={() => { setMenuPisos(false); despachar({ type: 'agregarNivel' }); }}>
+                <Text style={s.opcionTexto}>Agregar piso</Text>
+                <Text style={s.opcionNota}>Vacío, arriba de todos; el de abajo se ve punteado</Text>
+              </Pressable>
+              <Pressable style={({ pressed }) => [s.opcionPiso, pressed && s.pulsado]} onPress={() => { setMenuPisos(false); despachar({ type: 'duplicarNivel' }); }}>
+                <Text style={s.opcionTexto}>Duplicar este piso</Text>
+                <Text style={s.opcionNota}>Copia sus espacios a un piso nuevo (sin los vanos)</Text>
+              </Pressable>
+            </View>
+          </>
+        )}
         {!editor.planta.modulos.length && !colocar && (
           <View style={s.vacio} pointerEvents="none">
             <Text style={s.vacioTexto}>Toca «Colocar espacio» para empezar tu plano.</Text>
@@ -306,6 +336,12 @@ const s = StyleSheet.create({
   redondo: { width: 44, height: 44, borderRadius: 22, backgroundColor: T.boton, alignItems: 'center', justifyContent: 'center' },
   redondoTexto: { color: T.texto, fontSize: 22, marginTop: -3 },
   zonaLienzo: { flex: 1, backgroundColor: T.fondo },
+  piso: { position: 'absolute', top: 10, left: 10, minHeight: 40, paddingHorizontal: 14, borderRadius: 20, justifyContent: 'center',
+    backgroundColor: '#222838E6', borderWidth: 1, borderColor: '#39415A' },
+  pisoTexto: { color: T.texto, fontSize: 15, fontWeight: '600', fontVariant: ['tabular-nums'] },
+  menuPisos: { position: 'absolute', top: 56, left: 10, width: 280, backgroundColor: '#20263A', borderRadius: 14, paddingVertical: 6 },
+  opcionPiso: { paddingHorizontal: 16, paddingVertical: 10, minHeight: 44, justifyContent: 'center' },
+  opcionPisoActiva: { backgroundColor: '#2C3450' },
   vacio: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, alignItems: 'center', justifyContent: 'center', padding: 40 },
   vacioTexto: { color: T.textoSuave, fontSize: 16, textAlign: 'center', lineHeight: 22 },
   modoColocar: { position: 'absolute', top: 12, left: 12, right: 12, flexDirection: 'row', alignItems: 'center', gap: 10,
