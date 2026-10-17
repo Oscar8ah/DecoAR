@@ -1,28 +1,37 @@
 /**
- * Pantalla del editor de plano 2D — Etapa 1, entrega 1a.
+ * Pantalla del editor de plano 2D — Etapa 1, entrega 1b-1.
  *   · Sin cámara ni AR: este archivo y todo lo que importa son React Native puro.
- *   · Lienzo de SOLO LECTURA con un ejemplo y la acción "Ajustar vista".
- *   · "+ Espacio" y "Revisar plano" se ven en su sitio definitivo pero aún no actúan:
- *     se activan en la entrega 1b y en la Etapa 2, respectivamente.
+ *   · "Colocar espacio" → elegir tipo → tocar el plano donde va.
+ *   · Tocar selecciona; arrastrar mueve; el círculo estira; arrastrar el fondo desplaza la vista.
+ *   · Todo cambio del plano es una ACCIÓN EXISTENTE de planEditor.ts (ver gestosLienzo.ts):
+ *     la pantalla no calcula geometría propia.
+ *   · "Revisar plano" aún no actúa: llega en la Etapa 2.
  */
-import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { LayoutChangeEvent, Platform, Pressable, StyleSheet, Text, View, useWindowDimensions } from 'react-native';
-import type { EditorPlanta } from '../plan/planEditor';
+import React, { useEffect, useRef, useState } from 'react';
+import {
+  Alert, LayoutChangeEvent, PanResponder, Platform, Pressable, StyleSheet, Text, View, useWindowDimensions,
+} from 'react-native';
+import type { AccionEditor, EditorPlanta } from '../plan/planEditor';
 import LienzoPlanta from './LienzoPlanta';
-import { Vista, encuadrar, metros, modulosDelNivel, resumen } from './vistaLienzo';
+import { Vista, encuadrar, metros, modulosDelNivel, nombreVisible, resumen, textoMedidas } from './vistaLienzo';
+import { Contexto, ESPACIOS, Gesto, Pieza, iniciar, mismaVista, mover, terminar } from './gestosLienzo';
 import { T } from './paleta';
 
 interface Props {
   editor: EditorPlanta;
-  nombreEjemplo: string;
+  despachar: (a: AccionEditor) => void;
+  titulo: string;
+  /** Cambia cuando se carga otro plano: entonces la vista se vuelve a encuadrar sola. */
+  claveEncuadre: number;
+  onPlanoNuevo: () => void;
   onOtroEjemplo: () => void;
   onAbrirARAnterior: () => void;
 }
 
 /**
  * Márgenes seguros. SafeAreaView de React Native 0.86 está marcado como obsoleto y su sustituto
- * (react-native-safe-area-context) sería una dependencia nueva, así que en 1a se usan los márgenes
- * de los iPhone con isla o muesca (alto ≥ 812 pt) y unos mínimos para los demás.
+ * (react-native-safe-area-context) sería una dependencia nueva: se usan los márgenes de los iPhone
+ * con isla o muesca (alto ≥ 812 pt) y unos mínimos para los demás.
  */
 function usarMargenes() {
   const { height } = useWindowDimensions();
@@ -30,82 +39,189 @@ function usarMargenes() {
   return height >= 812 ? { arriba: 59, abajo: 30 } : { arriba: 22, abajo: 10 };
 }
 
-export default function EditorPlanoScreen({ editor, nombreEjemplo, onOtroEjemplo, onAbrirARAnterior }: Props) {
+export default function EditorPlanoScreen(p: Props) {
+  const { editor, despachar } = p;
   const m = usarMargenes();
   const nivel = editor.nivelActivo;
   const [lienzo, setLienzo] = useState({ ancho: 0, alto: 0 });
   const [vista, setVista] = useState<Vista | null>(null);
+  const [colocar, setColocar] = useState<Pieza | null>(null);
+  const [lista, setLista] = useState(false);
   const [menu, setMenu] = useState(false);
   const [aviso, setAviso] = useState<string | null>(null);
   const reloj = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const ajustarVista = useCallback(() => {
-    if (lienzo.ancho > 0) setVista(encuadrar(modulosDelNivel(editor.planta, nivel), lienzo.ancho, lienzo.alto));
-  }, [editor.planta, nivel, lienzo]);
-
-  // Al abrir, al girar el teléfono o al cargar otro ejemplo, el plano se encuadra solo.
-  useEffect(() => { ajustarVista(); }, [lienzo.ancho, lienzo.alto, editor.planta]);   // eslint-disable-line react-hooks/exhaustive-deps
-
-  useEffect(() => () => { if (reloj.current) clearTimeout(reloj.current); }, []);
   const avisar = (texto: string) => {
     setAviso(texto);
     if (reloj.current) clearTimeout(reloj.current);
     reloj.current = setTimeout(() => setAviso(null), 2600);
   };
+  useEffect(() => () => { if (reloj.current) clearTimeout(reloj.current); }, []);
+  // Los avisos del reductor (p. ej. "Ese espacio está en otro nivel") se muestran tal cual.
+  useEffect(() => { if (editor.mensaje) avisar(editor.mensaje); }, [editor.mensaje]);
+
+  const encuadreDe = () => encuadrar(modulosDelNivel(editor.planta, nivel), lienzo.ancho, lienzo.alto);
+  // Se encuadra solo al abrir, al cambiar el tamaño del lienzo o al cargar otro plano; NUNCA mientras
+  // se edita, para que la vista no salte bajo el dedo.
+  useEffect(() => { if (lienzo.ancho > 0) setVista(encuadreDe()); }, [lienzo.ancho, lienzo.alto, p.claveEncuadre]);   // eslint-disable-line react-hooks/exhaustive-deps
+
+  const ajustarVista = () => {
+    if (!vista || lienzo.ancho <= 0) return;
+    const objetivo = encuadreDe();
+    if (mismaVista(vista, objetivo)) avisar(modulosDelNivel(editor.planta, nivel).length ? 'El plano ya está encuadrado.' : 'El plano está vacío.');
+    else setVista(objetivo);
+  };
+
+  // ── Gestos: PanResponder → gestosLienzo.ts → acciones del reductor ──
+  const ctx = useRef<Contexto | null>(null);
+  ctx.current = vista ? { vista, planta: editor.planta, nivel, seleccion: editor.seleccion, colocar } : null;
+  const gesto = useRef<Gesto | null>(null);
+  const fin = useRef((cancelado: boolean) => {
+    const g = gesto.current, c = ctx.current;
+    gesto.current = null;
+    if (!g || !c) return;
+    terminar(g, c, cancelado).forEach(despachar);
+    if (!cancelado && !g.arrastrando && g.colocar) setColocar(null);
+  });
+  const respuesta = useRef(PanResponder.create({
+    onStartShouldSetPanResponder: () => true,
+    onMoveShouldSetPanResponder: () => true,
+    onPanResponderTerminationRequest: () => false,
+    onPanResponderGrant: e => {
+      const c = ctx.current;
+      if (!c) return;
+      const r = iniciar(c, e.nativeEvent.locationX, e.nativeEvent.locationY);
+      gesto.current = r.gesto;
+      r.acciones.forEach(despachar);
+    },
+    onPanResponderMove: (_e, g) => {
+      if (!gesto.current || g.numberActiveTouches > 1) return;   // dos dedos: el pellizco llega más adelante
+      const r = mover(gesto.current, g.dx, g.dy);
+      gesto.current = r.gesto;
+      r.acciones.forEach(despachar);
+      if (r.vista) setVista(r.vista);
+    },
+    onPanResponderRelease: () => fin.current(false),
+    onPanResponderTerminate: () => fin.current(true),
+  })).current;
 
   const alMedir = (e: LayoutChangeEvent) => {
     const { width, height } = e.nativeEvent.layout;
     if (Math.abs(width - lienzo.ancho) > 0.5 || Math.abs(height - lienzo.alto) > 0.5) setLienzo({ ancho: width, alto: height });
   };
 
+  const elegirEspacio = (pz: Pieza) => { setLista(false); setColocar(pz); despachar({ type: 'seleccionar', seleccion: null }); };
+
+  const planoNuevo = () => {
+    setMenu(false);
+    if (!editor.planta.modulos.length) { p.onPlanoNuevo(); return; }
+    Alert.alert('¿Empezar un plano nuevo?', 'El plano actual se borrará. Todavía no se guarda en ningún lado.',
+      [{ text: 'Cancelar', style: 'cancel' }, { text: 'Empezar de cero', style: 'destructive', onPress: p.onPlanoNuevo }]);
+  };
+
   const r = resumen(editor.planta, nivel);
-  const linea1 = r.espacios === 1 ? '1 espacio' : `${r.espacios} espacios`;
-  const linea2 = r.espacios ? `${metros(r.ancho)} × ${metros(r.largo)} m en total, ${metros(r.area)} m² de piso` : 'Plano vacío';
+  const subtitulo = r.espacios
+    ? `${r.espacios === 1 ? '1 espacio' : `${r.espacios} espacios`}, ${metros(r.ancho)} × ${metros(r.largo)} m, ${metros(r.area)} m² de piso`
+    : 'Sin espacios todavía';
+  const sel = editor.seleccion?.tipo === 'modulo' ? editor.planta.modulos.find(x => x.id === (editor.seleccion as any).id) : undefined;
+  const puedeDeshacer = editor.deshacer.length > 0, puedeRehacer = editor.rehacer.length > 0;
 
   return (
     <View style={[s.pantalla, { paddingTop: m.arriba }]}>
       {/* Cabecera: qué plano es y cuánto mide */}
       <View style={s.cabecera}>
         <View style={s.cabeceraTexto}>
-          <Text style={s.titulo} numberOfLines={1}>{nombreEjemplo}</Text>
-          <Text style={s.subtitulo} numberOfLines={1}>{linea1}, {linea2}</Text>
-          {r.niveles > 1 && (
-            <Text style={s.subtitulo} numberOfLines={1}>Nivel {nivel + 1} de {r.niveles}. Los demás niveles se conservan sin cambios.</Text>
-          )}
+          <Text style={s.titulo} numberOfLines={1}>{p.titulo}</Text>
+          <Text style={s.subtitulo} numberOfLines={1}>{subtitulo}</Text>
+          {r.niveles > 1 && <Text style={s.subtitulo} numberOfLines={1}>Nivel {nivel + 1} de {r.niveles}. Los demás niveles se conservan sin cambios.</Text>}
         </View>
-        <Pressable style={s.botonMenu} onPress={() => setMenu(v => !v)} accessibilityLabel="Más opciones" hitSlop={8}>
-          <Text style={s.botonMenuTexto}>⋯</Text>
+        <Pressable style={s.redondo} onPress={() => setMenu(v => !v)} accessibilityLabel="Más opciones" hitSlop={8}>
+          <Text style={s.redondoTexto}>⋯</Text>
         </Pressable>
       </View>
 
-      {/* Lienzo */}
+      {/* Herramientas: colocar espacio, deshacer, rehacer */}
+      <View style={s.herramientas}>
+        <Pressable style={({ pressed }) => [s.colocar, pressed && s.pulsado]} onPress={() => setLista(v => !v)} accessibilityRole="button">
+          <Text style={s.colocarTexto}>Colocar espacio</Text>
+        </Pressable>
+        <Pressable style={[s.redondo, !puedeDeshacer && s.inactivo]} disabled={!puedeDeshacer}
+          onPress={() => despachar({ type: 'deshacer' })} accessibilityLabel="Deshacer" hitSlop={6}>
+          <Text style={s.redondoTexto}>↶</Text>
+        </Pressable>
+        <Pressable style={[s.redondo, !puedeRehacer && s.inactivo]} disabled={!puedeRehacer}
+          onPress={() => despachar({ type: 'rehacer' })} accessibilityLabel="Rehacer" hitSlop={6}>
+          <Text style={s.redondoTexto}>↷</Text>
+        </Pressable>
+      </View>
+
+      {/* Lienzo: recibe los gestos; LienzoPlanta solo dibuja */}
       <View style={s.zonaLienzo} onLayout={alMedir}>
-        {vista && lienzo.ancho > 0 && (
-          <LienzoPlanta planta={editor.planta} nivel={nivel} vista={vista} ancho={lienzo.ancho} alto={lienzo.alto} />
+        <View style={StyleSheet.absoluteFill} {...respuesta.panHandlers}>
+          {vista && lienzo.ancho > 0 && (
+            <LienzoPlanta planta={editor.planta} nivel={nivel} vista={vista} ancho={lienzo.ancho} alto={lienzo.alto}
+              seleccionId={sel ? String(sel.id) : null} />
+          )}
+        </View>
+        {!editor.planta.modulos.length && !colocar && (
+          <View style={s.vacio} pointerEvents="none">
+            <Text style={s.vacioTexto}>Toca «Colocar espacio» para empezar tu plano.</Text>
+          </View>
+        )}
+        {colocar && (
+          <View style={s.modoColocar}>
+            <Text style={s.modoColocarTexto} numberOfLines={2}>Toca el plano donde quieres {colocar.etiqueta}</Text>
+            <Pressable style={s.cancelar} onPress={() => setColocar(null)} hitSlop={6}>
+              <Text style={s.cancelarTexto}>Cancelar</Text>
+            </Pressable>
+          </View>
         )}
       </View>
 
-      {aviso && <View style={s.aviso}><Text style={s.avisoTexto}>{aviso}</Text></View>}
+      {aviso && <View style={s.aviso} pointerEvents="none"><Text style={s.avisoTexto}>{aviso}</Text></View>}
 
-      {/* Barra inferior: tres acciones, siempre visibles */}
+      {/* Espacio seleccionado: mismo dato que su etiqueta en el plano */}
+      {sel && (
+        <View style={s.seleccion}>
+          <View style={s.seleccionTexto}>
+            <Text style={s.seleccionNombre} numberOfLines={1}>{nombreVisible(sel)}</Text>
+            <Text style={s.seleccionMedidas} numberOfLines={1}>{textoMedidas(sel)}. Arrástralo para moverlo; el círculo lo estira.</Text>
+          </View>
+          <Pressable style={({ pressed }) => [s.borrar, pressed && s.pulsado]} onPress={() => despachar({ type: 'eliminarModulo', id: String(sel.id) })}
+            accessibilityRole="button">
+            <Text style={s.borrarTexto}>Borrar</Text>
+          </Pressable>
+        </View>
+      )}
+
+      {/* Barra inferior */}
       <View style={[s.barra, { paddingBottom: m.abajo }]}>
-        <Boton texto="+ Espacio" inactivo onPress={() => avisar('Agregar espacios llega en la siguiente entrega.')} />
         <Boton texto="Ajustar vista" onPress={ajustarVista} />
         <Boton texto="Revisar plano" principal inactivo onPress={() => avisar('La revisión del plano llega después del editor.')} />
       </View>
+
+      {lista && (
+        <>
+          <Pressable style={StyleSheet.absoluteFill} onPress={() => setLista(false)} accessibilityLabel="Cerrar lista" />
+          <View style={[s.lista, { top: m.arriba + 116 }]}>
+            {ESPACIOS.map(pz => (
+              <Pressable key={pz.etiqueta} style={({ pressed }) => [s.pieza, pressed && s.pulsado]} onPress={() => elegirEspacio(pz)}>
+                <Text style={s.piezaTexto} numberOfLines={1}>{pz.etiqueta}</Text>
+              </Pressable>
+            ))}
+          </View>
+        </>
+      )}
 
       {menu && (
         <>
           <Pressable style={StyleSheet.absoluteFill} onPress={() => setMenu(false)} accessibilityLabel="Cerrar menú" />
           <View style={[s.menu, { top: m.arriba + 52 }]}>
-            <Pressable style={s.opcion} onPress={() => { setMenu(false); onOtroEjemplo(); }}>
-              <Text style={s.opcionTexto}>Cargar otro ejemplo</Text>
-            </Pressable>
+            <Opcion texto="Empezar plano nuevo" onPress={planoNuevo} />
             <View style={s.separador} />
-            <Pressable style={s.opcion} onPress={() => { setMenu(false); onAbrirARAnterior(); }}>
-              <Text style={s.opcionTexto}>AR versión anterior</Text>
-              <Text style={s.opcionNota}>Abre la cámara con el editor sobre la mesa</Text>
-            </Pressable>
+            <Opcion texto="Cargar un ejemplo" nota="Reemplaza el plano actual" onPress={() => { setMenu(false); p.onOtroEjemplo(); }} />
+            <View style={s.separador} />
+            <Opcion texto="AR versión anterior" nota="Abre la cámara con el editor sobre la mesa" onPress={() => { setMenu(false); p.onAbrirARAnterior(); }} />
           </View>
         </>
       )}
@@ -113,37 +229,62 @@ export default function EditorPlanoScreen({ editor, nombreEjemplo, onOtroEjemplo
   );
 }
 
+function Opcion({ texto, nota, onPress }: { texto: string; nota?: string; onPress: () => void }) {
+  return (
+    <Pressable style={s.opcion} onPress={onPress}>
+      <Text style={s.opcionTexto}>{texto}</Text>
+      {nota && <Text style={s.opcionNota}>{nota}</Text>}
+    </Pressable>
+  );
+}
+
 function Boton({ texto, onPress, principal, inactivo }: { texto: string; onPress: () => void; principal?: boolean; inactivo?: boolean }) {
   return (
-    <Pressable
-      onPress={onPress}
-      accessibilityRole="button"
-      accessibilityState={{ disabled: !!inactivo }}
-      style={({ pressed }) => [s.boton, principal && s.botonPrincipal, inactivo && s.botonInactivo, pressed && s.botonPulsado]}>
-      <Text style={[s.botonTexto, inactivo && s.botonTextoInactivo]} numberOfLines={1}>{texto}</Text>
+    <Pressable onPress={onPress} accessibilityRole="button" accessibilityState={{ disabled: !!inactivo }}
+      style={({ pressed }) => [s.boton, principal && s.botonPrincipal, inactivo && s.inactivo, pressed && s.pulsado]}>
+      <Text style={s.botonTexto} numberOfLines={1}>{texto}</Text>
     </Pressable>
   );
 }
 
 const s = StyleSheet.create({
   pantalla: { flex: 1, backgroundColor: T.panel },
-  cabecera: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 18, paddingBottom: 12 },
+  cabecera: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 18, paddingBottom: 10 },
   cabeceraTexto: { flex: 1, paddingRight: 12 },
   titulo: { color: T.texto, fontSize: 20, fontWeight: '700' },
   subtitulo: { color: T.textoSuave, fontSize: 13, marginTop: 3, fontVariant: ['tabular-nums'] },
-  botonMenu: { width: 44, height: 44, borderRadius: 22, backgroundColor: T.boton, alignItems: 'center', justifyContent: 'center' },
-  botonMenuTexto: { color: T.texto, fontSize: 22, marginTop: -4 },
+  herramientas: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingHorizontal: 14, paddingBottom: 12 },
+  colocar: { flex: 1, minHeight: 46, borderRadius: 14, backgroundColor: T.acento, alignItems: 'center', justifyContent: 'center' },
+  colocarTexto: { color: '#FFFFFF', fontSize: 16, fontWeight: '700' },
+  redondo: { width: 46, height: 46, borderRadius: 23, backgroundColor: T.boton, alignItems: 'center', justifyContent: 'center' },
+  redondoTexto: { color: T.texto, fontSize: 22, marginTop: -3 },
   zonaLienzo: { flex: 1, backgroundColor: T.fondo },
-  aviso: { position: 'absolute', left: 18, right: 18, bottom: 110, backgroundColor: '#2A3145', borderRadius: 12, padding: 12 },
+  vacio: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, alignItems: 'center', justifyContent: 'center', padding: 40 },
+  vacioTexto: { color: T.textoSuave, fontSize: 16, textAlign: 'center', lineHeight: 22 },
+  modoColocar: { position: 'absolute', top: 12, left: 12, right: 12, flexDirection: 'row', alignItems: 'center', gap: 10,
+    backgroundColor: '#2A2350', borderColor: T.acento, borderWidth: 1, borderRadius: 14, paddingLeft: 14, paddingRight: 6, paddingVertical: 6 },
+  modoColocarTexto: { flex: 1, color: T.texto, fontSize: 15 },
+  cancelar: { paddingHorizontal: 12, paddingVertical: 10, borderRadius: 10, backgroundColor: T.boton },
+  cancelarTexto: { color: T.texto, fontSize: 14, fontWeight: '600' },
+  aviso: { position: 'absolute', left: 18, right: 18, bottom: 170, backgroundColor: '#2A3145', borderRadius: 12, padding: 12 },
   avisoTexto: { color: T.texto, fontSize: 14, textAlign: 'center' },
+  seleccion: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingHorizontal: 14, paddingTop: 10, backgroundColor: T.panel },
+  seleccionTexto: { flex: 1 },
+  seleccionNombre: { color: T.texto, fontSize: 16, fontWeight: '700' },
+  seleccionMedidas: { color: T.textoSuave, fontSize: 13, marginTop: 2, fontVariant: ['tabular-nums'] },
+  borrar: { minHeight: 44, paddingHorizontal: 16, borderRadius: 12, backgroundColor: '#3A2228', alignItems: 'center', justifyContent: 'center' },
+  borrarTexto: { color: '#FCA5A5', fontSize: 15, fontWeight: '600' },
   barra: { flexDirection: 'row', gap: 10, paddingHorizontal: 14, paddingTop: 12, backgroundColor: T.panel },
   boton: { flex: 1, minHeight: 50, borderRadius: 14, backgroundColor: T.boton, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 6 },
   botonPrincipal: { backgroundColor: T.acento },
-  botonInactivo: { opacity: 0.45 },
-  botonPulsado: { opacity: 0.7 },
+  inactivo: { opacity: 0.45 },
+  pulsado: { opacity: 0.7 },
   botonTexto: { color: T.texto, fontSize: 15, fontWeight: '600' },
-  botonTextoInactivo: { color: T.texto },
-  menu: { position: 'absolute', right: 14, width: 260, backgroundColor: '#20263A', borderRadius: 14, paddingVertical: 6 },
+  lista: { position: 'absolute', left: 14, right: 14, flexDirection: 'row', flexWrap: 'wrap', gap: 8,
+    backgroundColor: '#20263A', borderRadius: 16, padding: 10 },
+  pieza: { width: '48.5%', minHeight: 50, borderRadius: 12, backgroundColor: T.boton, justifyContent: 'center', paddingHorizontal: 14 },
+  piezaTexto: { color: T.texto, fontSize: 16 },
+  menu: { position: 'absolute', right: 14, width: 270, backgroundColor: '#20263A', borderRadius: 14, paddingVertical: 6 },
   opcion: { paddingHorizontal: 16, paddingVertical: 12, minHeight: 44, justifyContent: 'center' },
   opcionTexto: { color: T.texto, fontSize: 16 },
   opcionNota: { color: T.textoSuave, fontSize: 12.5, marginTop: 3 },

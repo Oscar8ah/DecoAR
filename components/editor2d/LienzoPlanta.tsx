@@ -1,7 +1,8 @@
 /**
- * Lienzo del plano 2D (entrega 1a: SOLO LECTURA). Dibuja con Views de React Native: no hay cámara,
- * ni Viro, ni dependencias nuevas. No recibe gestos todavía (pointerEvents="none"): mover, estirar y
- * seleccionar llegan en la entrega 1b, y entonces enviarán acciones al reductor de planEditor.ts.
+ * Lienzo del plano 2D. Dibuja con Views de React Native: no hay cámara, ni Viro, ni dependencias nuevas.
+ * Solo DIBUJA (pointerEvents="none"): los gestos los recibe la pantalla y los traduce gestosLienzo.ts.
+ * Capas, de abajo arriba: cuadrícula, cuartos, estructura, vanos, ETIQUETAS (encima de todo, para que
+ * una viga no tape "Sala 5 × 4 m"), cotas, y el asa del espacio seleccionado.
  */
 import React, { memo } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
@@ -12,10 +13,13 @@ import {
   nombreVisible, textoMedidas, tipoVisual, tramoVano, vanosDelNivel,
 } from './vistaLienzo';
 import { T, colorTipo, colorVano } from './paleta';
+import { posicionAsa } from './gestosLienzo';
 
-interface Props { planta: Planta; nivel: number; vista: Vista; ancho: number; alto: number }
+const TAM_ASA = 24;   // pt dibujados; se agarra en 44 pt (RADIO_ASA en gestosLienzo.ts)
 
-function LienzoPlanta({ planta, nivel, vista, ancho, alto }: Props) {
+interface Props { planta: Planta; nivel: number; vista: Vista; ancho: number; alto: number; seleccionId?: string | null }
+
+function LienzoPlanta({ planta, nivel, vista, ancho, alto, seleccionId }: Props) {
   const mods = modulosDelNivel(planta, nivel);
   // Cuartos primero; columnas, vigas y demás estructura encima, para que no queden tapadas.
   const ordenados = [...mods.filter(m => esCuarto(m.tipo)), ...mods.filter(m => !esCuarto(m.tipo))];
@@ -33,14 +37,11 @@ function LienzoPlanta({ planta, nivel, vista, ancho, alto }: Props) {
 
       {ordenados.map(m => {
         const { px, py } = aPantalla(vista, m.x, m.z);
-        const w = m.ancho * vista.escala, h = m.largo * vista.escala;
         const color = colorTipo(tipoVisual(m));
-        const cabe = etiquetaCabe(w, h);
+        const sel = String(m.id) === seleccionId;
         return (
-          <View key={String(m.id)} style={[s.espacio, { left: px, top: py, width: w, height: h, borderColor: color, backgroundColor: color + '24' }]}>
-            {cabe.nombre && <Text style={s.nombre} numberOfLines={1}>{nombreVisible(m)}</Text>}
-            {cabe.medidas && <Text style={s.medidas} numberOfLines={1}>{textoMedidas(m)}</Text>}
-          </View>
+          <View key={String(m.id)} style={[s.espacio, { left: px, top: py, width: m.ancho * vista.escala, height: m.largo * vista.escala,
+            borderColor: sel ? '#FFFFFF' : color, borderWidth: sel ? 3 : 2, backgroundColor: color + (sel ? '40' : '24') }]} />
         );
       })}
 
@@ -56,7 +57,29 @@ function LienzoPlanta({ planta, nivel, vista, ancho, alto }: Props) {
         );
       })}
 
+      {/* Etiquetas en su propia capa, por encima de la estructura. La de una pieza de estructura solo
+          aparece si está seleccionada, para no tapar el nombre del cuarto que cruza. */}
+      {ordenados.filter(m => esCuarto(m.tipo) || String(m.id) === seleccionId).map(m => {
+        const { px, py } = aPantalla(vista, m.x, m.z);
+        const w = m.ancho * vista.escala, h = m.largo * vista.escala;
+        const cabe = etiquetaCabe(w, h);
+        if (!cabe.nombre) return null;
+        return (
+          <View key={`et${String(m.id)}`} style={[s.etiqueta, { left: px, top: py, width: w, height: h }]}>
+            <Text style={s.nombre} numberOfLines={1}>{nombreVisible(m)}</Text>
+            {cabe.medidas && <Text style={s.medidas} numberOfLines={1}>{textoMedidas(m)}</Text>}
+          </View>
+        );
+      })}
+
       {ext && <Cotas ext={ext} vista={vista} />}
+
+      {(() => {
+        const m = mods.find(x => String(x.id) === seleccionId);
+        if (!m) return null;
+        const a = posicionAsa(vista, m);
+        return <View style={[s.asa, { left: a.px - TAM_ASA / 2, top: a.py - TAM_ASA / 2 }]} />;
+      })()}
     </View>
   );
 }
@@ -90,8 +113,10 @@ const s = StyleSheet.create({
   lienzo: { backgroundColor: T.fondo, overflow: 'hidden' },
   lineaV: { position: 'absolute', top: 0, bottom: 0, width: StyleSheet.hairlineWidth },
   lineaH: { position: 'absolute', left: 0, right: 0, height: StyleSheet.hairlineWidth },
-  espacio: { position: 'absolute', borderWidth: 2, borderRadius: 2, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 4 },
-  nombre: { color: T.texto, fontSize: 15, fontWeight: '600' },
+  espacio: { position: 'absolute', borderRadius: 2 },
+  etiqueta: { position: 'absolute', alignItems: 'center', justifyContent: 'center', paddingHorizontal: 4 },
+  asa: { position: 'absolute', width: TAM_ASA, height: TAM_ASA, borderRadius: TAM_ASA / 2, backgroundColor: T.acento, borderWidth: 3, borderColor: '#FFFFFF' },
+  nombre: { color: T.texto, fontSize: 15, fontWeight: '600', textShadowColor: '#000000AA', textShadowRadius: 3 },
   medidas: { color: T.textoSuave, fontSize: 13, marginTop: 2, fontVariant: ['tabular-nums'] },
   vano: { position: 'absolute', borderRadius: 2 },
   cotaH: { position: 'absolute', height: 1.5, backgroundColor: T.cota },

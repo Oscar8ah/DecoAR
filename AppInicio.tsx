@@ -1,19 +1,19 @@
 /**
- * DecoAR — Raíz de la app (P1, Etapa 1, entrega 1a).
+ * DecoAR — Raíz de la app (P1, Etapa 1: entregas 1a y 1b-1).
  * ------------------------------------------------------------------
  * Flujo acordado, con UN SOLO proyecto de principio a fin:
  *
  *   editor2d  →  plano2dAR  →  revision3d  →  maqueta3dAR
  *   (sin AR)     (AR, mesa)    (sin AR)       (AR, mesa)
  *
- * En 1a solo existe 'editor2d'. Las otras etapas se añadirán aquí, una por entrega, leyendo el
+ * Por ahora solo existe 'editor2d'. Las otras etapas se añadirán aquí, una por entrega, leyendo el
  * MISMO `editor` (EditorPlanta + reducirEditor de planEditor.ts): ninguna crea su propia copia.
  *
  * AR: este archivo y el editor NO importan Viro. La versión anterior (App.tsx: escaneo, Dibujar y
  * el editor E2 sobre la mesa) se carga con `require` diferido SOLO al elegir "AR versión anterior";
  * hasta entonces no se evalúa su código, no se pide la cámara y no arranca ninguna sesión AR.
  */
-import React, { useReducer, useState } from 'react';
+import React, { useCallback, useState } from 'react';
 import { Pressable, StyleSheet, Text, View, useWindowDimensions } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import { AccionEditor, EditorPlanta, editorVacio, reducirEditor } from './components/plan/planEditor';
@@ -21,11 +21,11 @@ import { Plano, planoApartamentoSintetico, planoDemo } from './components/plan/p
 import { PLANO_REAL_1, PLANO_REAL_2 } from './components/plan/planosReales';
 import EditorPlanoScreen from './components/editor2d/EditorPlanoScreen';
 
-/** Etapas del flujo P1. Solo 'editor2d' está implementada (entrega 1a). */
+/** Etapas del flujo P1. Solo 'editor2d' está implementada. */
 export type Etapa = 'editor2d' | 'plano2dAR' | 'revision3d' | 'maqueta3dAR';
 type Pantalla = { tipo: 'flujo'; etapa: Etapa } | { tipo: 'arAnterior' };
 
-/** Ejemplos para el lienzo de solo lectura. Los mismos de la versión anterior (App.tsx). */
+/** Ejemplos del menú ⋯. Los mismos de la versión anterior (App.tsx). */
 export const EJEMPLOS: { nombre: string; crear: () => Plano }[] = [
   { nombre: 'Apartamento de prueba', crear: () => planoApartamentoSintetico() },
   { nombre: 'Sala', crear: () => planoDemo(4, 3, 2.5) },
@@ -38,17 +38,25 @@ const conEjemplo = (i: number): EditorPlanta =>
 
 export default function AppInicio() {
   const [pantalla, setPantalla] = useState<Pantalla>({ tipo: 'flujo', etapa: 'editor2d' });
-  const [ejemplo, setEjemplo] = useState(0);
   // El proyecto: vive aquí, por encima de todas las etapas, para que pasar de una a otra no lo pierda.
-  const [editor, despachar] = useReducer(
-    (e: EditorPlanta, a: AccionEditor) => reducirEditor(e, a), 0, conEjemplo);
+  // Se empieza con un plano VACÍO: la idea es que cada persona diseñe el suyo; los ejemplos están en ⋯.
+  const [editor, setEditor] = useState<EditorPlanta>(() => editorVacio());
+  const [titulo, setTitulo] = useState('Mi plano');
+  const [ejemplo, setEjemplo] = useState(-1);
+  const [claveEncuadre, setClaveEncuadre] = useState(0);
+  // Estable (no cambia entre renders): los gestos del lienzo la guardan una sola vez.
+  const despachar = useCallback((a: AccionEditor) => setEditor(e => reducirEditor(e, a)), []);
 
+  const planoNuevo = () => { setEditor(editorVacio()); setTitulo('Mi plano'); setClaveEncuadre(k => k + 1); };
   const otroEjemplo = () => {
     const i = (ejemplo + 1) % EJEMPLOS.length;
     setEjemplo(i);
-    despachar({ type: 'cargarPlano', plano: EJEMPLOS[i].crear() });
+    setEditor(conEjemplo(i));
+    setTitulo(EJEMPLOS[i].nombre);
+    setClaveEncuadre(k => k + 1);
   };
 
+  // Al volver de la versión anterior, el editor sigue con el mismo plano: su estado vive aquí.
   if (pantalla.tipo === 'arAnterior') return <ARAnterior onVolver={() => setPantalla({ tipo: 'flujo', etapa: 'editor2d' })} />;
 
   return (
@@ -56,7 +64,10 @@ export default function AppInicio() {
       <StatusBar style="light" />
       <EditorPlanoScreen
         editor={editor}
-        nombreEjemplo={EJEMPLOS[ejemplo].nombre}
+        despachar={despachar}
+        titulo={titulo}
+        claveEncuadre={claveEncuadre}
+        onPlanoNuevo={planoNuevo}
         onOtroEjemplo={otroEjemplo}
         onAbrirARAnterior={() => setPantalla({ tipo: 'arAnterior' })}
       />
