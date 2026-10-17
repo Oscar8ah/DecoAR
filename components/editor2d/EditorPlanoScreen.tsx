@@ -5,7 +5,8 @@
  *   · Tocar selecciona; arrastrar mueve; el círculo estira; arrastrar el fondo desplaza la vista.
  *   · + y − acercan y alejan alrededor del centro del lienzo.
  *   · "+" en cada muro compartido crea un vano; tocar un vano lo selecciona (Arco / Vano / Puerta,
- *     Borrar) y arrastrarlo lo mueve a lo largo del muro (1b-3).
+ *     Borrar) y arrastrarlo lo mueve a lo largo del muro (1b-3). Sus ajustes (ancho, posición,
+ *     alto y puerta) están en PanelVano (1b-3b).
  *   · Todo cambio del plano es una ACCIÓN EXISTENTE de planEditor.ts (ver gestosLienzo.ts):
  *     la pantalla no calcula geometría propia.
  *   · "Revisar plano" aún no actúa: llega en la Etapa 2.
@@ -20,8 +21,9 @@ import {
   PASO_ZOOM, Vista, encuadrar, metros, modulosDelNivel, nombreVisible, puedeAcercar, puedeAlejar, resumen, textoMedidas, zoomVista,
 } from './vistaLienzo';
 import { Contexto, ESPACIOS, Gesto, Pieza, iniciar, mismaVista, mover, terminar } from './gestosLienzo';
-import { T, colorVano } from './paleta';
-import { NOMBRE_VANO, vanosQueSeQuitarian } from './vanosLienzo';
+import { T } from './paleta';
+import { vanosQueSeQuitarian } from './vanosLienzo';
+import PanelVano from './PanelVano';
 
 interface Props {
   editor: EditorPlanta;
@@ -55,6 +57,7 @@ export default function EditorPlanoScreen(p: Props) {
   const [lista, setLista] = useState(false);
   const [menu, setMenu] = useState(false);
   const [aviso, setAviso] = useState<string | null>(null);
+  const [ajustesVano, setAjustesVano] = useState(false);   // panel del vano desplegado (se recuerda entre vanos)
   const reloj = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const avisar = (texto: string) => {
@@ -223,40 +226,13 @@ export default function EditorPlanoScreen(p: Props) {
         </View>
       )}
 
-      {/* Vano seleccionado: tipo, entre qué espacios está, y si se quitará al generar el 3D */}
+      {/* Vano seleccionado: panel compacto y, al desplegarlo, ancho, posición, alto y puerta (1b-3b) */}
       {vanoSel && (() => {
         const b = nombreDe(vanoSel.modulo_b);
         const donde = b ? `entre ${nombreDe(vanoSel.modulo_a) ?? 'un espacio'} y ${b}` : `en ${nombreDe(vanoSel.modulo_a) ?? 'un espacio'}, hacia afuera`;
-        const huerfano = huerfanos.has(String(vanoSel.id));
         return (
-          <View style={s.seleccionVano}>
-            <View style={s.seleccion}>
-              <View style={s.seleccionTexto}>
-                <Text style={s.seleccionNombre} numberOfLines={1}>{NOMBRE_VANO[vanoSel.tipo ?? 'arco'] ?? vanoSel.tipo} {donde}</Text>
-                <Text style={[s.seleccionMedidas, huerfano && s.alerta]} numberOfLines={2}>
-                  {huerfano ? 'Estos espacios ya no se tocan: el vano se quitará al generar el 3D.'
-                    : `${metros(vanoSel.ancho)} m de ancho. Arrástralo a lo largo del muro para moverlo.`}
-                </Text>
-              </View>
-              <Pressable style={({ pressed }) => [s.borrar, pressed && s.pulsado]} onPress={() => despachar({ type: 'borrarVano', id: String(vanoSel.id) })}
-                accessibilityRole="button">
-                <Text style={s.borrarTexto}>Borrar</Text>
-              </Pressable>
-            </View>
-            <View style={s.tipos}>
-              {(['arco', 'vano', 'puerta'] as const).map(tp => {
-                const activo = vanoSel.tipo === tp;
-                return (
-                  <Pressable key={tp} accessibilityRole="button" accessibilityState={{ selected: activo }}
-                    style={({ pressed }) => [s.tipo, activo && { borderColor: colorVano(tp), backgroundColor: colorVano(tp) + '33' }, pressed && s.pulsado]}
-                    onPress={() => { if (!activo) despachar({ type: 'actualizarVano', id: String(vanoSel.id), campo: 'tipo', valor: tp }); }}>
-                    <View style={[s.muestra, { backgroundColor: colorVano(tp) }]} />
-                    <Text style={s.tipoTexto}>{NOMBRE_VANO[tp]}</Text>
-                  </Pressable>
-                );
-              })}
-            </View>
-          </View>
+          <PanelVano vano={vanoSel} donde={donde} huerfano={huerfanos.has(String(vanoSel.id))} despachar={despachar}
+            expandido={ajustesVano} onExpandir={setAjustesVano} />
         );
       })()}
 
@@ -343,13 +319,6 @@ const s = StyleSheet.create({
   seleccionTexto: { flex: 1 },
   seleccionNombre: { color: T.texto, fontSize: 16, fontWeight: '700' },
   seleccionMedidas: { color: T.textoSuave, fontSize: 13, marginTop: 2, fontVariant: ['tabular-nums'] },
-  seleccionVano: { backgroundColor: T.panel },
-  alerta: { color: '#FCD34D' },
-  tipos: { flexDirection: 'row', gap: 8, paddingHorizontal: 14, paddingTop: 10 },
-  tipo: { flex: 1, minHeight: 44, borderRadius: 12, backgroundColor: T.boton, borderWidth: 2, borderColor: 'transparent',
-    flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8 },
-  muestra: { width: 14, height: 5, borderRadius: 2 },
-  tipoTexto: { color: T.texto, fontSize: 15, fontWeight: '600' },
   borrar: { minHeight: 44, paddingHorizontal: 16, borderRadius: 12, backgroundColor: '#3A2228', alignItems: 'center', justifyContent: 'center' },
   borrarTexto: { color: '#FCA5A5', fontSize: 15, fontWeight: '600' },
   barra: { flexDirection: 'row', gap: 10, paddingHorizontal: 14, paddingTop: 12, backgroundColor: T.panel },
