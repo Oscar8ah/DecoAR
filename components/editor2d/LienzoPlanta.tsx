@@ -2,7 +2,7 @@
  * Lienzo del plano 2D. Dibuja con Views de React Native: no hay cámara, ni Viro, ni dependencias nuevas.
  * Solo DIBUJA (pointerEvents="none"): los gestos los recibe la pantalla y los traduce gestosLienzo.ts.
  * Capas, de abajo arriba: cuadrícula, cuartos, estructura, vanos, ETIQUETAS (encima de todo, para que
- * una viga no tape "Sala 5 × 4 m"), cotas, y el asa del espacio seleccionado.
+ * una viga no tape "Sala 5 × 4 m"), "+" de los muros, cotas, y el asa del espacio seleccionado.
  */
 import React, { memo } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
@@ -12,14 +12,22 @@ import {
   ALTO_TEXTO_COTA, Vista, aPantalla, cotasGenerales, cuadricula, etiquetaCabe, extension, modulosDelNivel,
   nombreVisible, textoMedidas, tipoVisual, tramoVano, vanosDelNivel,
 } from './vistaLienzo';
-import { T, colorTipo, colorVano } from './paleta';
+import { T, colorMas, colorTipo, colorVano } from './paleta';
+import { botonesMas } from './vanosLienzo';
 import { posicionAsa } from './gestosLienzo';
 
 const TAM_ASA = 24;   // pt dibujados; se agarra en 44 pt (RADIO_ASA en gestosLienzo.ts)
+const TAM_MAS = 22;   // pt dibujados; se toca en 44 pt (RADIO_MAS en gestosLienzo.ts)
 
-interface Props { planta: Planta; nivel: number; vista: Vista; ancho: number; alto: number; seleccionId?: string | null }
+interface Props {
+  planta: Planta; nivel: number; vista: Vista; ancho: number; alto: number;
+  seleccionId?: string | null;
+  vanoSeleccionadoId?: string | null;
+  /** Vanos entre espacios que ya no se tocan: se quitarán al generar el 3D (se dibujan atenuados). */
+  vanosHuerfanos?: Set<string>;
+}
 
-function LienzoPlanta({ planta, nivel, vista, ancho, alto, seleccionId }: Props) {
+function LienzoPlanta({ planta, nivel, vista, ancho, alto, seleccionId, vanoSeleccionadoId, vanosHuerfanos }: Props) {
   const mods = modulosDelNivel(planta, nivel);
   // Cuartos primero; columnas, vigas y demás estructura encima, para que no queden tapadas.
   const ordenados = [...mods.filter(m => esCuarto(m.tipo)), ...mods.filter(m => !esCuarto(m.tipo))];
@@ -45,18 +53,6 @@ function LienzoPlanta({ planta, nivel, vista, ancho, alto, seleccionId }: Props)
         );
       })}
 
-      {vanosDelNivel(planta, nivel).map((v, i) => {
-        const t = tramoVano(v, mods);
-        if (!t) return null;
-        const a = aPantalla(vista, t.x0, t.z0), b = aPantalla(vista, t.x1, t.z1);
-        const horizontal = t.z0 === t.z1;
-        return (
-          <View key={`vano${i}`} style={[s.vano, { backgroundColor: colorVano(v.tipo) },
-            horizontal ? { left: a.px, top: a.py - 2.5, width: b.px - a.px, height: 5 }
-                       : { left: a.px - 2.5, top: a.py, width: 5, height: b.py - a.py }]} />
-        );
-      })}
-
       {/* Etiquetas en su propia capa, por encima de la estructura. La de una pieza de estructura solo
           aparece si está seleccionada, para no tapar el nombre del cuarto que cruza. */}
       {ordenados.filter(m => esCuarto(m.tipo) || String(m.id) === seleccionId).map(m => {
@@ -68,6 +64,34 @@ function LienzoPlanta({ planta, nivel, vista, ancho, alto, seleccionId }: Props)
           <View key={`et${String(m.id)}`} style={[s.etiqueta, { left: px, top: py, width: w, height: h }]}>
             <Text style={s.nombre} numberOfLines={1}>{nombreVisible(m)}</Text>
             {cabe.medidas && <Text style={s.medidas} numberOfLines={1}>{textoMedidas(m)}</Text>}
+          </View>
+        );
+      })}
+
+      {/* Vanos: barra sobre su muro con el color de la web; el seleccionado, más gruesa y con borde blanco */}
+      {vanosDelNivel(planta, nivel).map((v, i) => {
+        const t = tramoVano(v, mods);
+        if (!t) return null;
+        const a = aPantalla(vista, t.x0, t.z0), b = aPantalla(vista, t.x1, t.z1);
+        const horizontal = t.z0 === t.z1;
+        const sel = v.id !== undefined && String(v.id) === vanoSeleccionadoId;
+        const huerfano = v.id !== undefined && !!vanosHuerfanos?.has(String(v.id));
+        const g = sel ? 9 : 6;
+        return (
+          <View key={`vano${String(v.id ?? i)}`} style={[s.vano, { backgroundColor: colorVano(v.tipo), opacity: huerfano ? 0.4 : 1 },
+            sel && s.vanoSeleccionado,
+            horizontal ? { left: a.px, top: a.py - g / 2, width: b.px - a.px, height: g }
+                       : { left: a.px - g / 2, top: a.py, width: g, height: b.py - a.py }]} />
+        );
+      })}
+
+      {/* "+" en cada muro compartido sin vano del piso visible */}
+      {botonesMas(planta, nivel).map((m, i) => {
+        const q = aPantalla(vista, m.x, m.z);
+        const color = colorMas(m.exterior);
+        return (
+          <View key={`mas${i}`} style={[s.mas, { left: q.px - TAM_MAS / 2, top: q.py - TAM_MAS / 2, borderColor: color }]}>
+            <Text style={[s.masTexto, { color }]}>+</Text>
           </View>
         );
       })}
@@ -118,7 +142,11 @@ const s = StyleSheet.create({
   asa: { position: 'absolute', width: TAM_ASA, height: TAM_ASA, borderRadius: TAM_ASA / 2, backgroundColor: T.acento, borderWidth: 3, borderColor: '#FFFFFF' },
   nombre: { color: T.texto, fontSize: 15, fontWeight: '600', textShadowColor: '#000000AA', textShadowRadius: 3 },
   medidas: { color: T.textoSuave, fontSize: 13, marginTop: 2, fontVariant: ['tabular-nums'] },
-  vano: { position: 'absolute', borderRadius: 2 },
+  vano: { position: 'absolute', borderRadius: 4 },
+  vanoSeleccionado: { borderWidth: 2, borderColor: '#FFFFFF' },
+  mas: { position: 'absolute', width: TAM_MAS, height: TAM_MAS, borderRadius: TAM_MAS / 2, borderWidth: 2,
+    backgroundColor: '#0F0F1A', alignItems: 'center', justifyContent: 'center' },
+  masTexto: { fontSize: 16, fontWeight: '700', lineHeight: 18, marginTop: -1 },
   cotaH: { position: 'absolute', height: 1.5, backgroundColor: T.cota },
   cotaV: { position: 'absolute', width: 1.5, backgroundColor: T.cota },
   tope: { position: 'absolute', width: 2, height: 11, backgroundColor: T.cota },

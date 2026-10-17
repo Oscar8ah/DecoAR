@@ -15,7 +15,12 @@ const ESTRUCTURA = '#6B7280';
 /** Color base de un espacio según su tipo visual (ver tipoVisual en vistaLienzo.ts). */
 export const colorTipo = (tipo: string) => (esCuarto(tipo) ? POR_TIPO[tipo] ?? POR_TIPO.otro : ESTRUCTURA);
 
-export const colorVano = (tipo: string | undefined) => (tipo === 'ventana' ? '#67E8F9' : '#F59E0B');   // edVano
+/** Colores de la web (visor3d.js:7565): arco verde, vano celeste, puerta naranja. Ventana: extensión de DecoAR. */
+const POR_VANO: Record<string, string> = { arco: '#22C55E', vano: '#38BDF8', puerta: '#F59E0B', ventana: '#67E8F9' };
+export const colorVano = (tipo: string | undefined) => POR_VANO[tipo ?? ''] ?? POR_VANO.arco;
+
+/** "+" de un muro (visor3d.js:7543): celeste entre cuartos, verde lima hacia un espacio exterior. */
+export const colorMas = (exterior: boolean) => (exterior ? '#A3E635' : '#38BDF8');
 
 /** Tonos de la pantalla (concepto del Editor Planta compartido por el propietario). */
 export const T = {

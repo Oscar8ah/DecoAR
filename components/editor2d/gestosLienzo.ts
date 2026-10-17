@@ -10,16 +10,22 @@
  *   tocar el fondo           → seleccionar(null)
  *   arrastrar el fondo       → desplaza la vista (no toca el plano)
  *   en modo colocar, tocar   → agregarModulo centrado donde se tocó
+ *   tocar un "+" de un muro  → crearVanoEnContacto                      (1b-3)
+ *   tocar un vano            → seleccionar(vano)  (gana sobre el espacio, como en la web)
+ *   arrastrar un vano        → iniciarGesto, moverVano…, terminarGesto  (solo a lo largo de su muro)
  */
-import type { AccionEditor, Planta, Seleccion } from '../plan/planEditor';
+import type { AccionEditor, Contacto, Planta, Seleccion } from '../plan/planEditor';
 import { MEDIDAS_DEFECTO } from '../plan/planEditor';
 import type { Modulo } from '../plan/planModel';
 import { esCuarto } from '../plan/planModel';
-import { Vista, aPantalla, aPlano, modulosDelNivel } from './vistaLienzo';
+import { Vista, aPantalla, aPlano, modulosDelNivel, tramoVano, vanosDelNivel } from './vistaLienzo';
+import { botonesMas, ejeVano, tieneId } from './vanosLienzo';
 
 export const RADIO_ASA = 22;          // pt: el asa se puede agarrar en un círculo de 44 pt (mínimo táctil de iOS)
 export const MIN_OBJETIVO = 44;       // pt: un espacio muy delgado (una viga) se puede tocar en 44 pt
 export const UMBRAL_ARRASTRE = 8;     // pt: por debajo es un toque; el temblor del dedo no mueve nada
+export const RADIO_MAS = 22;          // pt: un "+" se toca en un círculo de 44 pt
+export const TOLERANCIA_VANO = 22;    // pt a cada lado de la barra del vano
 
 /** Lo que se quiere colocar al tocar el lienzo (tipo del reductor y nombre opcional, p. ej. Comedor). */
 export interface Pieza { tipo: string; nombre?: string; etiqueta: string }
@@ -35,7 +41,9 @@ export const ESPACIOS: Pieza[] = [
   { etiqueta: '📦 Zona', tipo: 'zona' },
 ];
 
-export type Objetivo = { tipo: 'asa'; id: string } | { tipo: 'modulo'; id: string } | { tipo: 'vacio' };
+export type Objetivo =
+  | { tipo: 'asa'; id: string } | { tipo: 'modulo'; id: string }
+  | { tipo: 'mas'; contacto: Contacto } | { tipo: 'vano'; id: string } | { tipo: 'vacio' };
 
 /** Esquina SE del módulo en pantalla: donde se dibuja y se agarra el asa de estirar. */
 export function posicionAsa(v: Vista, m: Modulo) { return aPantalla(v, m.x + m.ancho, m.z + m.largo); }
@@ -59,16 +67,43 @@ export function candidatos(v: Vista, p: Planta, nivel: number, px: number, py: n
   return [...exactos, ...ampliados];
 }
 
+/** Vano (con id, del piso visible) bajo el dedo: a menos de TOLERANCIA_VANO de su barra. */
+export function vanoBajoDedo(v: Vista, p: Planta, nivel: number, px: number, py: number): string | null {
+  const mods = modulosDelNivel(p, nivel);
+  let mejor: { id: string; d: number } | null = null;
+  for (const vn of vanosDelNivel(p, nivel)) {
+    if (!tieneId(vn)) continue;
+    const t = tramoVano(vn, mods);
+    if (!t) continue;
+    const a = aPantalla(v, t.x0, t.z0), b = aPantalla(v, t.x1, t.z1);
+    // distancia del punto al segmento a-b
+    const lx = b.px - a.px, ly = b.py - a.py, l2 = lx * lx + ly * ly;
+    const k = l2 ? Math.max(0, Math.min(1, ((px - a.px) * lx + (py - a.py) * ly) / l2)) : 0;
+    const d = Math.hypot(px - (a.px + k * lx), py - (a.py + k * ly));
+    if (d <= TOLERANCIA_VANO && (!mejor || d < mejor.d)) mejor = { id: String(vn.id), d };
+  }
+  return mejor?.id ?? null;
+}
+
 /**
- * Qué se agarra: el asa del espacio seleccionado; si no, el espacio seleccionado cuando está bajo el
- * dedo (aunque otro lo tape: así una sala cruzada por una viga se puede seguir moviendo); si no, el
- * de más arriba; si no hay nada, el fondo.
+ * Qué se agarra, en el orden de la web (visor3d.js:7684-7700): el asa del espacio seleccionado; un
+ * "+" de un muro; un vano (gana sobre el espacio porque vive sobre su borde); el espacio seleccionado
+ * si está bajo el dedo (aunque otro lo tape: una sala cruzada por una viga se sigue moviendo); el de
+ * más arriba; y si no hay nada, el fondo.
  */
 export function queToca(v: Vista, p: Planta, nivel: number, sel: Seleccion, px: number, py: number): Objetivo {
   if (sel?.tipo === 'modulo') {
     const m = modulosDelNivel(p, nivel).find(x => String(x.id) === sel.id);
     if (m) { const a = posicionAsa(v, m); if (Math.hypot(px - a.px, py - a.py) <= RADIO_ASA) return { tipo: 'asa', id: String(m.id) }; }
   }
+  let mas: { b: ReturnType<typeof botonesMas>[number]; d: number } | null = null;
+  for (const b of botonesMas(p, nivel)) {
+    const q = aPantalla(v, b.x, b.z), d = Math.hypot(px - q.px, py - q.py);
+    if (d <= RADIO_MAS && (!mas || d < mas.d)) mas = { b, d };
+  }
+  if (mas) return { tipo: 'mas', contacto: mas.b.contacto };
+  const vano = vanoBajoDedo(v, p, nivel, px, py);
+  if (vano) return { tipo: 'vano', id: vano };
   const c = candidatos(v, p, nivel, px, py);
   if (!c.length) return { tipo: 'vacio' };
   if (sel?.tipo === 'modulo' && c.includes(sel.id)) return { tipo: 'modulo', id: sel.id };
@@ -89,6 +124,8 @@ export interface Gesto {
   px0: number; py0: number;               // dónde empezó, en pt del lienzo
   vista0: Vista;
   mod0: { x: number; z: number; ancho: number; largo: number } | null;
+  /** Para arrastrar un vano: su centro al empezar y el eje de su muro. */
+  vano0: { centro: number; eje: 'x' | 'z' } | null;
   arrastrando: boolean;
   colocar: Pieza | null;
   /** Espacios superpuestos bajo el dedo y si el agarrado ya estaba seleccionado: tocar otra vez alterna. */
@@ -98,18 +135,23 @@ export interface Gesto {
 
 export interface Paso { gesto: Gesto; acciones: AccionEditor[]; vista?: Vista }
 
-/** Dedo abajo. Tocar un espacio no seleccionado lo selecciona ya, para que se vea qué se va a mover. */
+/** Dedo abajo. Tocar un espacio o un vano no seleccionado lo selecciona ya, para que se vea qué se va a mover. */
 export function iniciar(c: Contexto, px: number, py: number): Paso {
   const objetivo: Objetivo = c.colocar ? { tipo: 'vacio' } : queToca(c.vista, c.planta, c.nivel, c.seleccion, px, py);
-  const m = objetivo.tipo === 'vacio' ? null : c.planta.modulos.find(x => String(x.id) === objetivo.id) ?? null;
-  const yaSeleccionado = c.seleccion?.tipo === 'modulo' && objetivo.tipo !== 'vacio' && c.seleccion.id === objetivo.id;
+  const idMod = objetivo.tipo === 'modulo' || objetivo.tipo === 'asa' ? objetivo.id : null;
+  const m = idMod ? c.planta.modulos.find(x => String(x.id) === idMod) ?? null : null;
+  const vn = objetivo.tipo === 'vano' ? c.planta.vanos.find(x => String(x.id) === objetivo.id) ?? null : null;
+  const yaSeleccionado = (objetivo.tipo === 'modulo' || objetivo.tipo === 'asa' || objetivo.tipo === 'vano')
+    && c.seleccion?.id === objetivo.id && c.seleccion.tipo === (objetivo.tipo === 'vano' ? 'vano' : 'modulo');
   const gesto: Gesto = {
     objetivo, px0: px, py0: py, vista0: c.vista, arrastrando: false, colocar: c.colocar,
     mod0: m ? { x: m.x, z: m.z, ancho: m.ancho, largo: m.largo } : null,
+    vano0: vn ? { centro: vn.centro, eje: ejeVano(vn) } : null,
     bajoDedo: objetivo.tipo === 'modulo' ? candidatos(c.vista, c.planta, c.nivel, px, py) : [], yaSeleccionado,
   };
-  const acciones: AccionEditor[] = objetivo.tipo === 'modulo' && !yaSeleccionado
-    ? [{ type: 'seleccionar', seleccion: { tipo: 'modulo', id: objetivo.id } }] : [];
+  const acciones: AccionEditor[] = [];
+  if (objetivo.tipo === 'modulo' && !yaSeleccionado) acciones.push({ type: 'seleccionar', seleccion: { tipo: 'modulo', id: objetivo.id } });
+  if (objetivo.tipo === 'vano' && !yaSeleccionado) acciones.push({ type: 'seleccionar', seleccion: { tipo: 'vano', id: objetivo.id } });
   return { gesto, acciones };
 }
 
@@ -119,32 +161,39 @@ export function mover(g: Gesto, dx: number, dy: number): Paso {
   const primera = !g.arrastrando;
   const gesto = primera ? { ...g, arrastrando: true } : g;
   const e = g.vista0.escala;
-  if (g.objetivo.tipo === 'vacio' || !g.mod0) {
+  const o = g.objetivo;
+  const editaAlgo = (o.tipo === 'modulo' || o.tipo === 'asa') ? !!g.mod0 : o.tipo === 'vano' ? !!g.vano0 : false;
+  if (!editaAlgo) {   // fondo o "+": arrastrar desplaza la vista
     return { gesto, acciones: [], vista: { ...g.vista0, ox: g.vista0.ox + dx, oy: g.vista0.oy + dy } };
   }
   const acciones: AccionEditor[] = primera ? [{ type: 'iniciarGesto' }] : [];
-  if (g.objetivo.tipo === 'modulo') {
-    acciones.push({ type: 'moverModulo', id: g.objetivo.id, x: g.mod0.x + dx / e, z: g.mod0.z + dy / e });
-  } else {
-    acciones.push({ type: 'redimensionar', id: g.objetivo.id, esquina: 'se',
-      x: g.mod0.x + g.mod0.ancho + dx / e, z: g.mod0.z + g.mod0.largo + dy / e });
+  if (o.tipo === 'modulo') {
+    acciones.push({ type: 'moverModulo', id: o.id, x: g.mod0!.x + dx / e, z: g.mod0!.z + dy / e });
+  } else if (o.tipo === 'asa') {
+    acciones.push({ type: 'redimensionar', id: o.id, esquina: 'se',
+      x: g.mod0!.x + g.mod0!.ancho + dx / e, z: g.mod0!.z + g.mod0!.largo + dy / e });
+  } else if (o.tipo === 'vano') {
+    // Solo cuenta el movimiento a lo largo del muro; el reductor lo limita al tramo compartido.
+    acciones.push({ type: 'moverVano', id: o.id, u: g.vano0!.centro + (g.vano0!.eje === 'x' ? dx : dy) / e });
   }
   return { gesto, acciones };
 }
 
-/** Dedo arriba. `cancelado`: el sistema interrumpió el gesto (llamada, notificación…): no se coloca nada. */
+/** Dedo arriba. `cancelado`: el sistema interrumpió el gesto (llamada, notificación…): no se crea nada. */
 export function terminar(g: Gesto, c: Contexto, cancelado = false): AccionEditor[] {
-  if (g.arrastrando) return g.objetivo.tipo === 'vacio' ? [] : [{ type: 'terminarGesto' }];
+  const o = g.objetivo;
+  if (g.arrastrando) return (o.tipo === 'modulo' || o.tipo === 'asa' || o.tipo === 'vano') ? [{ type: 'terminarGesto' }] : [];
   if (cancelado) return [];
   if (g.colocar) {
     const p = aPlano(c.vista, g.px0, g.py0);
     const esq = esquinaParaColocar(g.colocar.tipo, p.x, p.z);
     return [{ type: 'agregarModulo', tipo: g.colocar.tipo, nombre: g.colocar.nombre, x: esq.x, z: esq.z }];
   }
-  if (g.objetivo.tipo === 'vacio' && c.seleccion) return [{ type: 'seleccionar', seleccion: null }];
+  if (o.tipo === 'mas') return [{ type: 'crearVanoEnContacto', contacto: o.contacto }];
+  if (o.tipo === 'vacio' && c.seleccion) return [{ type: 'seleccionar', seleccion: null }];
   // Tocar otra vez un espacio ya seleccionado que tiene otro encima o debajo: pasa al siguiente.
-  if (g.objetivo.tipo === 'modulo' && g.yaSeleccionado && g.bajoDedo.length > 1) {
-    const i = g.bajoDedo.indexOf(g.objetivo.id);
+  if (o.tipo === 'modulo' && g.yaSeleccionado && g.bajoDedo.length > 1) {
+    const i = g.bajoDedo.indexOf(o.id);
     return [{ type: 'seleccionar', seleccion: { tipo: 'modulo', id: g.bajoDedo[(i + 1) % g.bajoDedo.length] } }];
   }
   return [];
