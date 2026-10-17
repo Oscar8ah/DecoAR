@@ -7,7 +7,7 @@ import { PLANO_REAL_1, PLANO_REAL_2 } from '../components/plan/planosReales';
 import { editorVacio, reducirEditor, EditorPlanta } from '../components/plan/planEditor';
 import {
   aPantalla, aPlano, encuadrar, cuadricula, metros, textoMedidas, tipoVisual, nombreVisible, etiquetaCabe,
-  tramoVano, modulosDelNivel, vanosDelNivel, resumen, extension, cotasGenerales,
+  tramoVano, modulosDelNivel, vanosDelNivel, resumen, extension, cotasGenerales, zoomVista, puedeAcercar, puedeAlejar, PASO_ZOOM,
   ESCALA_MAX, ESCALA_MIN, ESCALA_INICIAL, MARGEN_ENCUADRE, MAX_LINEAS, Vista,
 } from '../components/editor2d/vistaLienzo';
 import { colorTipo } from '../components/editor2d/paleta';
@@ -156,6 +156,25 @@ t('10) la cota muestra el ancho y el largo totales', (() => {
   const c = cotasGenerales(encuadrar(mods, 393, 600), extension(mods)!);
   return c.horizontal.texto === '8 m' && c.vertical.texto === '8,2 m';
 })());
+
+// ── 11. Zoom con + y − ──
+{
+  const v: Vista = { escala: 40, ox: 37, oy: -12 };
+  const cx = 196.5, cy = 300;
+  const antes = aPlano(v, cx, cy);
+  const cerca = zoomVista(v, PASO_ZOOM, cx, cy);
+  const despues = aPlano(cerca, cx, cy);
+  t('11) "+" acerca un 25 %', near(cerca.escala, 50));
+  t('11) el punto del centro del lienzo no se mueve al acercar', near(antes.x, despues.x) && near(antes.z, despues.z));
+  const vuelta = zoomVista(cerca, 1 / PASO_ZOOM, cx, cy);
+  t('11) "−" deshace exactamente el "+"', near(vuelta.escala, v.escala) && near(vuelta.ox, v.ox) && near(vuelta.oy, v.oy));
+  let w = v; for (let i = 0; i < 40; i++) w = zoomVista(w, PASO_ZOOM, cx, cy);
+  t('11) nunca pasa de la escala máxima, y entonces "+" se apaga', w.escala === ESCALA_MAX && !puedeAcercar(w) && puedeAlejar(w));
+  let z = v; for (let i = 0; i < 40; i++) z = zoomVista(z, 1 / PASO_ZOOM, cx, cy);
+  t('11) nunca baja de la escala mínima, y entonces "−" se apaga', z.escala === ESCALA_MIN && !puedeAlejar(z) && puedeAcercar(z));
+  const quieto = zoomVista(w, PASO_ZOOM, cx, cy);
+  t('11) en el tope, otro "+" no desplaza la vista', near(quieto.ox, w.ox) && near(quieto.oy, w.oy));
+}
 
 console.log(`\n${ok} pruebas OK, ${fail} fallidas`);
 process.exit(fail ? 1 : 0);

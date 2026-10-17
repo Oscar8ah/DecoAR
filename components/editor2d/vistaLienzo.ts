@@ -54,6 +54,21 @@ export function encuadrar(mods: Modulo[], ancho: number, alto: number, margen = 
   return { escala, ox: ancho / 2 - cx * escala, oy: alto / 2 - cz * escala };
 }
 
+/** Paso de cada toque en + o −: 25 % más cerca o más lejos. */
+export const PASO_ZOOM = 1.25;
+
+/**
+ * Acercar (factor > 1) o alejar (< 1) manteniendo FIJO el punto (cx, cy) de la pantalla, normalmente
+ * el centro del lienzo: lo que estaba en el centro sigue en el centro. Respeta ESCALA_MIN y ESCALA_MAX.
+ */
+export function zoomVista(v: Vista, factor: number, cx: number, cy: number): Vista {
+  const escala = Math.min(ESCALA_MAX, Math.max(ESCALA_MIN, v.escala * factor));
+  const k = escala / v.escala;
+  return { escala, ox: cx - (cx - v.ox) * k, oy: cy - (cy - v.oy) * k };
+}
+export const puedeAcercar = (v: Vista) => v.escala < ESCALA_MAX - 1e-9;
+export const puedeAlejar = (v: Vista) => v.escala > ESCALA_MIN + 1e-9;
+
 // ───────────────────────────── Cuadrícula ─────────────────────────────
 export interface Linea { pos: number; fuerte: boolean }
 export const MAX_LINEAS = 160;      // por eje: cada línea es una View; más no aporta y cuesta rendimiento

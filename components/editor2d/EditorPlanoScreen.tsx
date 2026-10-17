@@ -3,6 +3,7 @@
  *   · Sin cámara ni AR: este archivo y todo lo que importa son React Native puro.
  *   · "Colocar espacio" → elegir tipo → tocar el plano donde va.
  *   · Tocar selecciona; arrastrar mueve; el círculo estira; arrastrar el fondo desplaza la vista.
+ *   · + y − acercan y alejan alrededor del centro del lienzo.
  *   · Todo cambio del plano es una ACCIÓN EXISTENTE de planEditor.ts (ver gestosLienzo.ts):
  *     la pantalla no calcula geometría propia.
  *   · "Revisar plano" aún no actúa: llega en la Etapa 2.
@@ -13,7 +14,9 @@ import {
 } from 'react-native';
 import type { AccionEditor, EditorPlanta } from '../plan/planEditor';
 import LienzoPlanta from './LienzoPlanta';
-import { Vista, encuadrar, metros, modulosDelNivel, nombreVisible, resumen, textoMedidas } from './vistaLienzo';
+import {
+  PASO_ZOOM, Vista, encuadrar, metros, modulosDelNivel, nombreVisible, puedeAcercar, puedeAlejar, resumen, textoMedidas, zoomVista,
+} from './vistaLienzo';
 import { Contexto, ESPACIOS, Gesto, Pieza, iniciar, mismaVista, mover, terminar } from './gestosLienzo';
 import { T } from './paleta';
 
@@ -71,6 +74,8 @@ export default function EditorPlanoScreen(p: Props) {
     if (mismaVista(vista, objetivo)) avisar(modulosDelNivel(editor.planta, nivel).length ? 'El plano ya está encuadrado.' : 'El plano está vacío.');
     else setVista(objetivo);
   };
+
+  const zoom = (factor: number) => { if (vista) setVista(zoomVista(vista, factor, lienzo.ancho / 2, lienzo.alto / 2)); };
 
   // ── Gestos: PanResponder → gestosLienzo.ts → acciones del reductor ──
   const ctx = useRef<Contexto | null>(null);
@@ -145,6 +150,7 @@ export default function EditorPlanoScreen(p: Props) {
         <Pressable style={({ pressed }) => [s.colocar, pressed && s.pulsado]} onPress={() => setLista(v => !v)} accessibilityRole="button">
           <Text style={s.colocarTexto}>Colocar espacio</Text>
         </Pressable>
+        <View style={s.hueco} />
         <Pressable style={[s.redondo, !puedeDeshacer && s.inactivo]} disabled={!puedeDeshacer}
           onPress={() => despachar({ type: 'deshacer' })} accessibilityLabel="Deshacer" hitSlop={6}>
           <Text style={s.redondoTexto}>↶</Text>
@@ -168,6 +174,18 @@ export default function EditorPlanoScreen(p: Props) {
             <Text style={s.vacioTexto}>Toca «Colocar espacio» para empezar tu plano.</Text>
           </View>
         )}
+        {vista && (
+          <View style={s.zoom}>
+            <Pressable style={({ pressed }) => [s.zoomBoton, !puedeAcercar(vista) && s.inactivo, pressed && s.pulsado]}
+              disabled={!puedeAcercar(vista)} onPress={() => zoom(PASO_ZOOM)} accessibilityLabel="Acercar" hitSlop={4}>
+              <Text style={s.zoomTexto}>+</Text>
+            </Pressable>
+            <Pressable style={({ pressed }) => [s.zoomBoton, !puedeAlejar(vista) && s.inactivo, pressed && s.pulsado]}
+              disabled={!puedeAlejar(vista)} onPress={() => zoom(1 / PASO_ZOOM)} accessibilityLabel="Alejar" hitSlop={4}>
+              <Text style={s.zoomTexto}>−</Text>
+            </Pressable>
+          </View>
+        )}
         {colocar && (
           <View style={s.modoColocar}>
             <Text style={s.modoColocarTexto} numberOfLines={2}>Toca el plano donde quieres {colocar.etiqueta}</Text>
@@ -185,7 +203,7 @@ export default function EditorPlanoScreen(p: Props) {
         <View style={s.seleccion}>
           <View style={s.seleccionTexto}>
             <Text style={s.seleccionNombre} numberOfLines={1}>{nombreVisible(sel)}</Text>
-            <Text style={s.seleccionMedidas} numberOfLines={1}>{textoMedidas(sel)}. Arrástralo para moverlo; el círculo lo estira.</Text>
+            <Text style={s.seleccionMedidas} numberOfLines={2}>{textoMedidas(sel)}. Arrástralo para moverlo; el círculo lo estira.</Text>
           </View>
           <Pressable style={({ pressed }) => [s.borrar, pressed && s.pulsado]} onPress={() => despachar({ type: 'eliminarModulo', id: String(sel.id) })}
             accessibilityRole="button">
@@ -254,9 +272,14 @@ const s = StyleSheet.create({
   titulo: { color: T.texto, fontSize: 20, fontWeight: '700' },
   subtitulo: { color: T.textoSuave, fontSize: 13, marginTop: 3, fontVariant: ['tabular-nums'] },
   herramientas: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingHorizontal: 14, paddingBottom: 12 },
-  colocar: { flex: 1, minHeight: 46, borderRadius: 14, backgroundColor: T.acento, alignItems: 'center', justifyContent: 'center' },
-  colocarTexto: { color: '#FFFFFF', fontSize: 16, fontWeight: '700' },
-  redondo: { width: 46, height: 46, borderRadius: 23, backgroundColor: T.boton, alignItems: 'center', justifyContent: 'center' },
+  colocar: { minHeight: 42, borderRadius: 12, backgroundColor: T.acento, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 16 },
+  colocarTexto: { color: '#FFFFFF', fontSize: 15, fontWeight: '700' },
+  hueco: { flex: 1 },
+  zoom: { position: 'absolute', right: 12, bottom: 12, gap: 8 },
+  zoomBoton: { width: 46, height: 46, borderRadius: 23, backgroundColor: '#222838E6', borderWidth: 1, borderColor: '#39415A',
+    alignItems: 'center', justifyContent: 'center' },
+  zoomTexto: { color: T.texto, fontSize: 26, fontWeight: '500', marginTop: -2 },
+  redondo: { width: 44, height: 44, borderRadius: 22, backgroundColor: T.boton, alignItems: 'center', justifyContent: 'center' },
   redondoTexto: { color: T.texto, fontSize: 22, marginTop: -3 },
   zonaLienzo: { flex: 1, backgroundColor: T.fondo },
   vacio: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, alignItems: 'center', justifyContent: 'center', padding: 40 },
