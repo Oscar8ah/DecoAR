@@ -74,8 +74,11 @@ function LienzoPlanta({ planta, nivel, vista, ancho, alto, seleccionId, vanoSele
         if (!cabe.nombre) return null;
         return (
           <View key={`et${String(m.id)}`} style={[s.etiqueta, { left: px, top: py, width: w, height: h }]}>
-            <Text style={s.nombre} numberOfLines={1}>{nombreVisible(m)}</Text>
-            {cabe.medidas && <Text style={s.medidas} numberOfLines={1}>{textoMedidas(m)}</Text>}
+            {/* Sobre un piso del catálogo (claro u oscuro) la etiqueta lleva un fondo discreto: siempre se lee */}
+            <View style={m.imagen_piso ? s.etiquetaFondo : undefined}>
+              <Text style={s.nombre} numberOfLines={1}>{nombreVisible(m)}</Text>
+              {cabe.medidas && <Text style={[s.medidas, m.imagen_piso && s.medidasSobrePiso]} numberOfLines={1}>{textoMedidas(m)}</Text>}
+            </View>
           </View>
         );
       })}
@@ -156,7 +159,9 @@ const s = StyleSheet.create({
   etiqueta: { position: 'absolute', alignItems: 'center', justifyContent: 'center', paddingHorizontal: 4 },
   asa: { position: 'absolute', width: TAM_ASA, height: TAM_ASA, borderRadius: TAM_ASA / 2, backgroundColor: T.acento, borderWidth: 3, borderColor: '#FFFFFF' },
   nombre: { color: T.texto, fontSize: 15, fontWeight: '600', textShadowColor: '#000000AA', textShadowRadius: 3 },
-  medidas: { color: T.textoSuave, fontSize: 13, marginTop: 2, fontVariant: ['tabular-nums'] },
+  medidas: { color: T.textoSuave, fontSize: 13, marginTop: 2, fontVariant: ['tabular-nums'], textShadowColor: '#000000AA', textShadowRadius: 3 },
+  medidasSobrePiso: { color: T.texto },
+  etiquetaFondo: { alignItems: 'center', backgroundColor: '#0D1018B8', borderRadius: 8, paddingHorizontal: 8, paddingVertical: 3 },
   vano: { position: 'absolute', borderRadius: 4 },
   vanoSeleccionado: { borderWidth: 2, borderColor: '#FFFFFF' },
   mas: { position: 'absolute', width: TAM_MAS, height: TAM_MAS, borderRadius: TAM_MAS / 2, borderWidth: 2,

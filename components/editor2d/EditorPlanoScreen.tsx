@@ -9,7 +9,7 @@
  *     alto y puerta) están en PanelVano (1b-3b).
  *   · Todo cambio del plano es una ACCIÓN EXISTENTE de planEditor.ts (ver gestosLienzo.ts):
  *     la pantalla no calcula geometría propia.
- *   · "Revisar plano" aún no actúa: llega en la Etapa 2.
+ *   · "Generar 3D" convierte el plano (arcos automáticos, como la web) y abre la vista 3D (Entrega 2).
  */
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
@@ -18,9 +18,9 @@ import {
 import type { AccionEditor, EditorPlanta } from '../plan/planEditor';
 import LienzoPlanta from './LienzoPlanta';
 import {
-  PASO_ZOOM, Vista, encuadrar, metros, modulosDelNivel, nombreVisible, puedeAcercar, puedeAlejar, resumen, textoMedidas, zoomVista,
+  PASO_ZOOM, Vista, encuadrar, ladoZoom, metros, modulosDelNivel, nombreVisible, puedeAcercar, puedeAlejar, resumen, textoMedidas, zoomVista,
 } from './vistaLienzo';
-import { CONSTRUCCION, Contexto, ESPACIOS, Gesto, Pieza, iniciar, mismaVista, mover, notaConstruccion, terminar } from './gestosLienzo';
+import { CONSTRUCCION, Contexto, ESPACIOS, Gesto, Pieza, iniciar, mismaVista, mover, notaConstruccion, posicionAsa, puedeEstirar, terminar } from './gestosLienzo';
 import { T } from './paleta';
 import { vanosQueSeQuitarian } from './vanosLienzo';
 import PanelVano from './PanelVano';
@@ -36,6 +36,8 @@ interface Props {
   onPlanoNuevo: () => void;
   onOtroEjemplo: () => void;
   onAbrirARAnterior: () => void;
+  /** "Generar 3D": convierte (arcos automáticos, como la web) y abre la vista 3D. */
+  onGenerar3D: () => void;
 }
 
 /**
@@ -226,7 +228,7 @@ export default function EditorPlanoScreen(p: Props) {
           </View>
         )}
         {vista && (
-          <View style={s.zoom}>
+          <View style={[s.zoom, ladoZoom(sel && puedeEstirar(sel) ? posicionAsa(vista, sel) : null, lienzo.ancho, lienzo.alto) === 'izquierda' && s.zoomIzquierda]}>
             <Pressable style={({ pressed }) => [s.zoomBoton, !puedeAcercar(vista) && s.inactivo, pressed && s.pulsado]}
               disabled={!puedeAcercar(vista)} onPress={() => zoom(PASO_ZOOM)} accessibilityLabel="Acercar" hitSlop={4}>
               <Text style={s.zoomTexto}>+</Text>
@@ -295,7 +297,10 @@ export default function EditorPlanoScreen(p: Props) {
       {/* Barra inferior */}
       <View style={[s.barra, { paddingBottom: m.abajo }]}>
         <Boton texto="Ajustar vista" onPress={ajustarVista} />
-        <Boton texto="Revisar plano" principal inactivo onPress={() => avisar('La revisión del plano llega después del editor.')} />
+        <Boton texto="Generar 3D" principal onPress={() => {
+          if (!editor.planta.modulos.length) avisar('Coloca al menos un espacio para generar el 3D.');
+          else p.onGenerar3D();
+        }} />
       </View>
 
       {lista && (
@@ -387,6 +392,7 @@ const s = StyleSheet.create({
     justifyContent: 'center', paddingHorizontal: 16 },
   obrasTexto: { color: T.texto, fontSize: 15, fontWeight: '700' },
   zoom: { position: 'absolute', right: 12, bottom: 12, gap: 8 },
+  zoomIzquierda: { right: undefined, left: 12 },
   zoomBoton: { width: 46, height: 46, borderRadius: 23, backgroundColor: '#222838E6', borderWidth: 1, borderColor: '#39415A',
     alignItems: 'center', justifyContent: 'center' },
   zoomTexto: { color: T.texto, fontSize: 26, fontWeight: '500', marginTop: -2 },

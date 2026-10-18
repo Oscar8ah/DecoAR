@@ -1,27 +1,28 @@
 /**
- * DecoAR — Raíz de la app (P1, Etapa 1: entregas 1a y 1b-1).
+ * DecoAR — Raíz de la app (P1: editor 2D y Entrega 2: vista 3D y maqueta en AR).
  * ------------------------------------------------------------------
  * Flujo acordado, con UN SOLO proyecto de principio a fin:
  *
  *   editor2d  →  plano2dAR  →  revision3d  →  maqueta3dAR
  *   (sin AR)     (AR, mesa)    (sin AR)       (AR, mesa)
  *
- * Por ahora solo existe 'editor2d'. Las otras etapas se añadirán aquí, una por entrega, leyendo el
- * MISMO `editor` (EditorPlanta + reducirEditor de planEditor.ts): ninguna crea su propia copia.
+ * Implementadas: 'editor2d', 'revision3d' (3D sin AR) y 'maqueta3dAR'; 'plano2dAR' queda para después.
+ * Todas leen el MISMO `editor` (EditorPlanta + reducirEditor de planEditor.ts): ninguna crea su propia copia.
  *
  * AR: este archivo y el editor NO importan Viro. La versión anterior (App.tsx: escaneo, Dibujar y
  * el editor E2 sobre la mesa) se carga con `require` diferido SOLO al elegir "AR versión anterior";
  * hasta entonces no se evalúa su código, no se pide la cámara y no arranca ninguna sesión AR.
  */
-import React, { useCallback, useState } from 'react';
+import React, { useCallback, useMemo, useState } from 'react';
 import { Pressable, StyleSheet, Text, View, useWindowDimensions } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
-import { AccionEditor, EditorPlanta, editorVacio, reducirEditor } from './components/plan/planEditor';
+import { AccionEditor, EditorPlanta, editorVacio, planoDe, reducirEditor } from './components/plan/planEditor';
+import { generar3D, resumenConversion } from './components/vista3d/flujo';
 import { Plano, planoApartamentoSintetico, planoDemo } from './components/plan/planModel';
 import { PLANO_REAL_1, PLANO_REAL_2 } from './components/plan/planosReales';
 import EditorPlanoScreen from './components/editor2d/EditorPlanoScreen';
 
-/** Etapas del flujo P1. Solo 'editor2d' está implementada. */
+/** Etapas del flujo P1. 'plano2dAR' (plano 2D sobre la mesa) aún no está implementada. */
 export type Etapa = 'editor2d' | 'plano2dAR' | 'revision3d' | 'maqueta3dAR';
 type Pantalla = { tipo: 'flujo'; etapa: Etapa } | { tipo: 'arAnterior' };
 
@@ -56,8 +57,31 @@ export default function AppInicio() {
     setClaveEncuadre(k => k + 1);
   };
 
+  // ── Entrega 2: Generar 3D ──
+  // 'convertir' (acción del reductor, como la web) se aplica al MISMO proyecto y se puede deshacer en el plano.
+  const [resumen3d, setResumen3d] = useState<string | null>(null);
+  const generar = () => {
+    const despues = generar3D(editor);
+    setResumen3d(resumenConversion(editor, despues).texto);
+    setEditor(despues);
+    setPantalla({ tipo: 'flujo', etapa: 'revision3d' });
+  };
+  // Un solo objeto de plano por versión del proyecto: la vista 3D y MaquetaScene lo usan para no recalcular.
+  const plano = useMemo(() => planoDe(editor.planta), [editor.planta]);
+  const irA = (etapa: Etapa) => setPantalla({ tipo: 'flujo', etapa });
+
   // Al volver de la versión anterior, el editor sigue con el mismo plano: su estado vive aquí.
   if (pantalla.tipo === 'arAnterior') return <ARAnterior onVolver={() => setPantalla({ tipo: 'flujo', etapa: 'editor2d' })} />;
+
+  // Pantallas con Viro: se cargan con require diferido, solo al entrar (el inicio no carga Viro ni pide la cámara).
+  if (pantalla.etapa === 'revision3d') {
+    const Vista3DScreen = require('./components/vista3d/Vista3DScreen').default as typeof import('./components/vista3d/Vista3DScreen').default;
+    return <><StatusBar style="light" /><Vista3DScreen plano={plano} resumen={resumen3d} onVolver={() => irA('editor2d')} onVerAR={() => irA('maqueta3dAR')} /></>;
+  }
+  if (pantalla.etapa === 'maqueta3dAR') {
+    const MaquetaARScreen = require('./components/vista3d/MaquetaARScreen').default as typeof import('./components/vista3d/MaquetaARScreen').default;
+    return <><StatusBar style="light" /><MaquetaARScreen plano={plano} onVolver={() => irA('revision3d')} /></>;
+  }
 
   return (
     <>
@@ -70,6 +94,7 @@ export default function AppInicio() {
         onPlanoNuevo={planoNuevo}
         onOtroEjemplo={otroEjemplo}
         onAbrirARAnterior={() => setPantalla({ tipo: 'arAnterior' })}
+        onGenerar3D={generar}
       />
     </>
   );

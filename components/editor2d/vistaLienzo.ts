@@ -69,6 +69,19 @@ export function zoomVista(v: Vista, factor: number, cx: number, cy: number): Vis
 export const puedeAcercar = (v: Vista) => v.escala < ESCALA_MAX - 1e-9;
 export const puedeAlejar = (v: Vista) => v.escala > ESCALA_MIN + 1e-9;
 
+/**
+ * Botones de zoom (dos círculos de 46 pt, uno encima del otro, a 12 pt del borde inferior). Normalmente
+ * van a la derecha; si el asa de estirar del espacio seleccionado caería debajo de ellos, pasan a la
+ * izquierda para que nunca se tapen.
+ */
+export const ZOOM = { margen: 12, ancho: 46, alto: 46 * 2 + 8 };
+export function ladoZoom(asa: { px: number; py: number } | null, ancho: number, alto: number, radioAsa = 22): 'derecha' | 'izquierda' {
+  if (!asa) return 'derecha';
+  const x0 = ancho - ZOOM.margen - ZOOM.ancho, y0 = alto - ZOOM.margen - ZOOM.alto;
+  const tapa = asa.px + radioAsa >= x0 && asa.px - radioAsa <= ancho - ZOOM.margen && asa.py + radioAsa >= y0 && asa.py - radioAsa <= alto - ZOOM.margen;
+  return tapa ? 'izquierda' : 'derecha';
+}
+
 // ───────────────────────────── Cuadrícula ─────────────────────────────
 export interface Linea { pos: number; fuerte: boolean }
 export const MAX_LINEAS = 160;      // por eje: cada línea es una View; más no aporta y cuesta rendimiento
