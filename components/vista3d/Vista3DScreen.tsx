@@ -15,6 +15,9 @@ import {
   Mirada, Vista, avisos, encuadre, girar, miradaDe, pisosDe, puedeAcercar, puedeAlejar, sinContenido, transformacion, visibles, zoom,
 } from './camara3d';
 import Escena3D from './Escena3D';
+import type { Mueble } from '../plan/planEditor';
+import { conAproximaciones, objetosEnEscena } from '../objetos/objetos3d';
+import { CATALOGO_OBJETOS } from '../objetos/catalogoObjetos';
 
 const C = { fondo: '#0D1018', panel: '#161A25', boton: '#222838', texto: '#E8EBF3', suave: '#98A1B7', acento: '#7357F0' };
 const COLOR_FIDELIDAD = { compatible: '#86EFAC', parcial: '#FCD34D', 'no-representado': '#FCA5A5', pendiente: '#98A1B7' } as const;
@@ -26,6 +29,10 @@ interface Props {
   resumen: string | null;
   onVolver: () => void;
   onVerAR: () => void;
+  /** Objetos del editor (Planta.muebles): la fuente de verdad. */
+  muebles?: Mueble[];
+  /** Agregar un objeto del catálogo al plano (queda en el centro del piso 1; se mueve en el plano). */
+  onAgregarObjeto?: (tipo: string) => void;
 }
 
 /** Si Viro falla al montar la escena, se muestra una salida en vez de una pantalla en blanco. */
@@ -44,13 +51,18 @@ class Protegido extends React.Component<{ onVolver: () => void; children: React.
   }
 }
 
-export default function Vista3DScreen({ plano, resumen, onVolver, onVerAR }: Props) {
+export default function Vista3DScreen({ plano, resumen, onVolver, onVerAR, muebles, onAgregarObjeto }: Props) {
   const { height } = useWindowDimensions();
   const arriba = Platform.OS === 'ios' ? (height >= 812 ? 59 : 22) : 28;
   const maqueta = useMemo(() => generarMaqueta(plano), [plano]);
   const enc = useMemo(() => encuadre(maqueta), [maqueta]);
   const pisos = useMemo(() => pisosDe(plano), [plano]);
-  const lista = useMemo(() => avisos(maqueta, plano), [maqueta, plano]);
+  const lista = useMemo(() => {
+    const aprox = conAproximaciones(muebles);
+    return aprox.length ? [...avisos(maqueta, plano), { fidelidad: 'parcial' as const, texto: `Objetos con piezas redondas (${aprox.join(', ')}): se dibujan con piezas cuadradas.` }]
+      : avisos(maqueta, plano);
+  }, [maqueta, plano, muebles]);
+  const [verObjetos, setVerObjetos] = useState(false);
 
   const [vista, setVista] = useState<Vista>('isometrica');
   const [mirada, setMirada] = useState<Mirada>(() => miradaDe('isometrica')!);
@@ -82,7 +94,8 @@ export default function Vista3DScreen({ plano, resumen, onVolver, onVerAR }: Pro
   })).current;
 
   const cajas = useMemo(() => visibles(maqueta, plano, hasta), [maqueta, plano, hasta]);
-  const appProps = useMemo(() => ({ cajas, transformacion: transformacion(enc, mirada) }), [cajas, enc, mirada]);
+  const objetos = useMemo(() => objetosEnEscena(muebles, plano, 1, hasta), [muebles, plano, hasta]);
+  const appProps = useMemo(() => ({ cajas, objetos, transformacion: transformacion(enc, mirada) }), [cajas, objetos, enc, mirada]);
 
   if (sinContenido(maqueta)) {
     return (
@@ -101,6 +114,22 @@ export default function Vista3DScreen({ plano, resumen, onVolver, onVerAR }: Pro
         <Text style={s.tituloBarra}>Vista 3D</Text>
         <Pressable style={s.botonAcento} onPress={onVerAR} accessibilityRole="button"><Text style={s.botonAcentoTexto}>Ver en AR</Text></Pressable>
       </View>
+      {onAgregarObjeto && (
+        <Pressable style={[s.boton, s.objetosBoton]} onPress={() => setVerObjetos(v => !v)} accessibilityRole="button">
+          <Text style={s.botonTexto}>Objetos ({(muebles ?? []).length}) {verObjetos ? '▴' : '▾'}</Text>
+        </Pressable>
+      )}
+      {verObjetos && onAgregarObjeto && (
+        <ScrollView style={{ maxHeight: Math.round(height * 0.32) }} contentContainerStyle={s.listaObjetos}>
+          <Text style={s.nota}>Se agrega en el centro del primer piso. Para moverlo o girarlo, vuelve al plano.</Text>
+          {CATALOGO_OBJETOS.map(o => (
+            <Pressable key={o.id} style={s.objetoFila} onPress={() => onAgregarObjeto(o.id)} accessibilityRole="button">
+              <Text style={s.botonTexto}>{o.icono} {o.nombre}</Text>
+              <Text style={s.mas}>+</Text>
+            </Pressable>
+          ))}
+        </ScrollView>
+      )}
 
       <View style={s.vistas}>
         {([['isometrica', 'Isométrica'], ['arriba', 'Desde arriba'], ['libre', 'Libre']] as [Vista, string][]).map(([v, t]) => (
@@ -175,6 +204,10 @@ const s = StyleSheet.create({
   botonAcento: { minHeight: 44, paddingHorizontal: 16, borderRadius: 12, backgroundColor: C.acento, justifyContent: 'center' },
   botonAcentoTexto: { color: '#FFFFFF', fontSize: 15, fontWeight: '700' },
   vistas: { flexDirection: 'row', gap: 8, paddingHorizontal: 14, paddingBottom: 10 },
+  objetosBoton: { marginHorizontal: 14, marginBottom: 10, alignItems: 'center' },
+  listaObjetos: { paddingHorizontal: 14, paddingBottom: 10, gap: 6 },
+  objetoFila: { minHeight: 44, borderRadius: 12, backgroundColor: C.boton, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 14 },
+  mas: { color: C.texto, fontSize: 22, fontWeight: '600' },
   vistaBoton: { flex: 1, minHeight: 44, borderRadius: 12, backgroundColor: C.boton, alignItems: 'center', justifyContent: 'center', borderWidth: 2, borderColor: 'transparent' },
   vistaActiva: { borderColor: C.acento, backgroundColor: '#2D2A4A' },
   lienzo: { flex: 1, backgroundColor: C.fondo },

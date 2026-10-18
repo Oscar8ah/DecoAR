@@ -18,6 +18,7 @@ import { Pressable, StyleSheet, Text, View, useWindowDimensions } from 'react-na
 import { StatusBar } from 'expo-status-bar';
 import { AccionEditor, EditorPlanta, editorVacio, planoDe, reducirEditor } from './components/plan/planEditor';
 import { generar3D, resumenConversion } from './components/vista3d/flujo';
+import { objetoPorId, medidasObjeto } from './components/objetos/catalogoObjetos';
 import { Plano, planoApartamentoSintetico, planoDemo } from './components/plan/planModel';
 import { PLANO_REAL_1, PLANO_REAL_2 } from './components/plan/planosReales';
 import EditorPlanoScreen from './components/editor2d/EditorPlanoScreen';
@@ -69,6 +70,16 @@ export default function AppInicio() {
   // Un solo objeto de plano por versión del proyecto: la vista 3D y MaquetaScene lo usan para no recalcular.
   const plano = useMemo(() => planoDe(editor.planta), [editor.planta]);
   const irA = (etapa: Etapa) => setPantalla({ tipo: 'flujo', etapa });
+  // Agregar un objeto desde la vista 3D: va al centro del primer piso del plano (se mueve después en el plano).
+  const agregarObjeto = (tipo: string) => {
+    const o = objetoPorId(tipo);
+    if (!o) return;
+    const mods = editor.planta.modulos.filter(m => (m.nivel || 0) === 0);
+    const cx = mods.length ? (Math.min(...mods.map(m => m.x)) + Math.max(...mods.map(m => m.x + m.ancho))) / 2 : 0;
+    const cz = mods.length ? (Math.min(...mods.map(m => m.z)) + Math.max(...mods.map(m => m.z + m.largo))) / 2 : 0;
+    if (editor.nivelActivo !== 0) despachar({ type: 'cambiarNivel', delta: -editor.nivelActivo });
+    despachar({ type: 'agregarMueble', tipo, x: cx, z: cz, ...medidasObjeto(o) });
+  };
 
   // Al volver de la versión anterior, el editor sigue con el mismo plano: su estado vive aquí.
   if (pantalla.tipo === 'arAnterior') return <ARAnterior onVolver={() => setPantalla({ tipo: 'flujo', etapa: 'editor2d' })} />;
@@ -76,11 +87,12 @@ export default function AppInicio() {
   // Pantallas con Viro: se cargan con require diferido, solo al entrar (el inicio no carga Viro ni pide la cámara).
   if (pantalla.etapa === 'revision3d') {
     const Vista3DScreen = require('./components/vista3d/Vista3DScreen').default as typeof import('./components/vista3d/Vista3DScreen').default;
-    return <><StatusBar style="light" /><Vista3DScreen plano={plano} resumen={resumen3d} onVolver={() => irA('editor2d')} onVerAR={() => irA('maqueta3dAR')} /></>;
+    return <><StatusBar style="light" /><Vista3DScreen plano={plano} resumen={resumen3d} onVolver={() => irA('editor2d')} onVerAR={() => irA('maqueta3dAR')}
+      muebles={editor.planta.muebles} onAgregarObjeto={agregarObjeto} /></>;
   }
   if (pantalla.etapa === 'maqueta3dAR') {
     const MaquetaARScreen = require('./components/vista3d/MaquetaARScreen').default as typeof import('./components/vista3d/MaquetaARScreen').default;
-    return <><StatusBar style="light" /><MaquetaARScreen plano={plano} onVolver={() => irA('revision3d')} /></>;
+    return <><StatusBar style="light" /><MaquetaARScreen plano={plano} muebles={editor.planta.muebles} onVolver={() => irA('revision3d')} /></>;
   }
 
   return (

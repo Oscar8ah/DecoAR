@@ -11,8 +11,10 @@ import { Platform, Pressable, StyleSheet, Text, View, useWindowDimensions } from
 import { ViroARSceneNavigator } from '@reactvision/react-viro';
 import MaquetaScene, { ESCALA_MAQUETA } from '../ar/MaquetaScene';
 import type { Plano } from '../plan/planModel';
+import type { Mueble } from '../plan/planEditor';
+import { contenidoConObjetos } from './contenidoMesaAR';
 
-interface Props { plano: Plano; onVolver: () => void }
+interface Props { plano: Plano; onVolver: () => void; /** Objetos del editor: si hay, se dibujan sobre la mesa con la maqueta. */ muebles?: Mueble[] }
 
 /** Si Viro falla al iniciar la sesión AR, se ofrece volver en vez de dejar la pantalla en blanco. */
 class Protegido extends React.Component<{ onVolver: () => void; children: React.ReactNode }, { error: string | null }> {
@@ -30,16 +32,20 @@ class Protegido extends React.Component<{ onVolver: () => void; children: React.
   }
 }
 
-export default function MaquetaARScreen({ plano, onVolver }: Props) {
+export default function MaquetaARScreen({ plano, onVolver, muebles }: Props) {
   const { height } = useWindowDimensions();
   const arriba = Platform.OS === 'ios' ? (height >= 812 ? 54 : 18) : 24;
   const [info, setInfo] = useState<string | null>(null);
   const [reinicio, setReinicio] = useState(0);
   // Mismas propiedades que App.tsx le pasa a MaquetaScene sin contenido editable (App.tsx:155-158):
   // la escena dibuja la maqueta del `plano` como siempre.
+  // Con objetos, se usa la entrada existente `contenidoMesa` de MaquetaScene (maqueta + objetos); sin objetos,
+  // nada cambia respecto a la Entrega 2.
+  const contenido = useMemo(() => ((muebles ?? []).length ? contenidoConObjetos(plano, muebles!) : undefined), [plano, muebles]);
   const appProps = useMemo(() => ({
     plano, escalaMaqueta: ESCALA_MAQUETA, maquetaResetTick: reinicio, onMaquetaInfo: setInfo,
-  }), [plano, reinicio]);
+    ...(contenido ? { contenidoMesa: contenido } : {}),
+  }), [plano, reinicio, contenido]);
 
   return (
     <View style={s.lleno}>

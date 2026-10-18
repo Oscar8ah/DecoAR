@@ -13,8 +13,10 @@
  *   tocar un "+" de un muro  → crearVanoEnContacto                      (1b-3)
  *   tocar un vano            → seleccionar(vano)  (gana sobre el espacio, como en la web)
  *   arrastrar un vano        → iniciarGesto, moverVano…, terminarGesto  (solo a lo largo de su muro)
+ *   objeto (3b): toque = seleccionar; toque sobre el ya seleccionado = girarMueble 45°;
+ *                mantener 350 ms y arrastrar = moverMueble (un paso de deshacer); arrastrar sin mantener = vista
  */
-import type { AccionEditor, Contacto, Planta, Seleccion } from '../plan/planEditor';
+import type { AccionEditor, Contacto, Mueble, Planta, Seleccion } from '../plan/planEditor';
 import { MEDIDAS_DEFECTO } from '../plan/planEditor';
 import type { Modulo } from '../plan/planModel';
 import { esCuarto } from '../plan/planModel';
@@ -26,12 +28,13 @@ export const MIN_OBJETIVO = 44;       // pt: un espacio muy delgado (una viga) s
 export const UMBRAL_ARRASTRE = 8;     // pt: por debajo es un toque; el temblor del dedo no mueve nada
 export const RADIO_MAS = 22;          // pt: un "+" se toca en un círculo de 44 pt
 export const TOLERANCIA_VANO = 22;    // pt a cada lado de la barra del vano
+export const PULSACION_LARGA = 350;   // ms: mantener presionado un objeto antes de poder arrastrarlo
 
 /**
  * Lo que se quiere colocar al tocar el lienzo (tipo del reductor y nombre opcional, p. ej. Comedor).
  * `vano`: puerta o ventana, que se ponen tocando un MURO (ponerPuertaLibre / ponerVentanaLibre).
  */
-export interface Pieza { tipo: string; nombre?: string; etiqueta: string; vano?: 'puerta' | 'ventana' }
+export interface Pieza { tipo: string; nombre?: string; etiqueta: string; vano?: 'puerta' | 'ventana'; mueble?: { ancho: number; largo: number; alto: number } }
 
 /** Tipos de espacio del botón "Colocar espacio". Mismos tipos y nombres que la paleta de E2 (EditorPanel). */
 export const ESPACIOS: Pieza[] = [
@@ -88,7 +91,21 @@ export const puedeEstirar = (m: Pick<Modulo, 'tipo'>) => !SIN_ESTIRAR.has(m.tipo
 export type Objetivo =
   | { tipo: 'asa'; id: string } | { tipo: 'modulo'; id: string }
   | { tipo: 'mas'; contacto: Contacto } | { tipo: 'menos'; contacto: Contacto; cerrado: boolean }
-  | { tipo: 'vano'; id: string } | { tipo: 'vacio' };
+  | { tipo: 'vano'; id: string } | { tipo: 'mueble'; id: string } | { tipo: 'vacio' };
+
+/** Objetos del piso visible bajo el dedo (el último dibujado primero). Se tocan en al menos 44 pt. */
+export function mueblesBajoDedo(v: Vista, p: Planta, nivel: number, px: number, py: number): string[] {
+  const q = aPlano(v, px, py);
+  const out: string[] = [];
+  for (const o of [...(p.muebles ?? [])].reverse()) {
+    if ((o.nivel || 0) !== nivel) continue;
+    const t = (o.rot * Math.PI) / 180, dx = q.x - o.x, dz = q.z - o.z;
+    const lx = dx * Math.cos(t) + dz * Math.sin(t), lz = -dx * Math.sin(t) + dz * Math.cos(t);   // al sistema del objeto
+    const mitadMin = MIN_OBJETIVO / 2 / v.escala;
+    if (Math.abs(lx) <= Math.max(o.ancho / 2, mitadMin) && Math.abs(lz) <= Math.max(o.largo / 2, mitadMin)) out.push(o.id);
+  }
+  return out;
+}
 
 /** Esquina SE del módulo en pantalla: donde se dibuja y se agarra el asa de estirar. */
 export function posicionAsa(v: Vista, m: Modulo) { return aPantalla(v, m.x + m.ancho, m.z + m.largo); }
@@ -153,6 +170,8 @@ export function queToca(v: Vista, p: Planta, nivel: number, sel: Seleccion, px: 
   }
   const vano = vanoBajoDedo(v, p, nivel, px, py);
   if (vano) return { tipo: 'vano', id: vano };
+  const objs = mueblesBajoDedo(v, p, nivel, px, py);   // los objetos están dentro de los cuartos: ganan sobre ellos
+  if (objs.length) return { tipo: 'mueble', id: sel?.tipo === 'mueble' && objs.includes(sel.id) ? sel.id : objs[0] };
   const c = candidatos(v, p, nivel, px, py);
   if (!c.length) return { tipo: 'vacio' };
   if (sel?.tipo === 'modulo' && c.includes(sel.id)) return { tipo: 'modulo', id: sel.id };
@@ -175,6 +194,10 @@ export interface Gesto {
   mod0: { x: number; z: number; ancho: number; largo: number } | null;
   /** Para arrastrar un vano: su centro al empezar y el eje de su muro. */
   vano0: { centro: number; eje: 'x' | 'z' } | null;
+  /** Objetos: dónde estaba, cuándo empezó el toque y si el arrastre mueve el objeto o la vista. */
+  mueble0: { x: number; z: number } | null;
+  t0: number;
+  modo: 'editar' | 'vista' | null;
   arrastrando: boolean;
   colocar: Pieza | null;
   /** Espacios superpuestos bajo el dedo y si el agarrado ya estaba seleccionado: tocar otra vez alterna. */
@@ -185,32 +208,43 @@ export interface Gesto {
 export interface Paso { gesto: Gesto; acciones: AccionEditor[]; vista?: Vista }
 
 /** Dedo abajo. Tocar un espacio o un vano no seleccionado lo selecciona ya, para que se vea qué se va a mover. */
-export function iniciar(c: Contexto, px: number, py: number): Paso {
+export function iniciar(c: Contexto, px: number, py: number, t = 0): Paso {
   const objetivo: Objetivo = c.colocar ? { tipo: 'vacio' } : queToca(c.vista, c.planta, c.nivel, c.seleccion, px, py);
   const idMod = objetivo.tipo === 'modulo' || objetivo.tipo === 'asa' ? objetivo.id : null;
   const m = idMod ? c.planta.modulos.find(x => String(x.id) === idMod) ?? null : null;
   const vn = objetivo.tipo === 'vano' ? c.planta.vanos.find(x => String(x.id) === objetivo.id) ?? null : null;
-  const yaSeleccionado = (objetivo.tipo === 'modulo' || objetivo.tipo === 'asa' || objetivo.tipo === 'vano')
-    && c.seleccion?.id === objetivo.id && c.seleccion.tipo === (objetivo.tipo === 'vano' ? 'vano' : 'modulo');
+  const ob: Mueble | null = objetivo.tipo === 'mueble' ? (c.planta.muebles ?? []).find(x => x.id === objetivo.id) ?? null : null;
+  const yaSeleccionado = (objetivo.tipo === 'modulo' || objetivo.tipo === 'asa' || objetivo.tipo === 'vano' || objetivo.tipo === 'mueble')
+    && c.seleccion?.id === objetivo.id && c.seleccion.tipo === (objetivo.tipo === 'vano' ? 'vano' : objetivo.tipo === 'mueble' ? 'mueble' : 'modulo');
   const gesto: Gesto = {
     objetivo, px0: px, py0: py, vista0: c.vista, arrastrando: false, colocar: c.colocar,
     mod0: m ? { x: m.x, z: m.z, ancho: m.ancho, largo: m.largo } : null,
     vano0: vn ? { centro: vn.centro, eje: ejeVano(vn) } : null,
+    mueble0: ob ? { x: ob.x, z: ob.z } : null, t0: t, modo: null,
     bajoDedo: objetivo.tipo === 'modulo' ? candidatos(c.vista, c.planta, c.nivel, px, py) : [], yaSeleccionado,
   };
   const acciones: AccionEditor[] = [];
   if (objetivo.tipo === 'modulo' && !yaSeleccionado) acciones.push({ type: 'seleccionar', seleccion: { tipo: 'modulo', id: objetivo.id } });
   if (objetivo.tipo === 'vano' && !yaSeleccionado) acciones.push({ type: 'seleccionar', seleccion: { tipo: 'vano', id: objetivo.id } });
+  if (objetivo.tipo === 'mueble' && !yaSeleccionado) acciones.push({ type: 'seleccionar', seleccion: { tipo: 'mueble', id: objetivo.id } });
   return { gesto, acciones };
 }
 
 /** Dedo moviéndose. `dx`, `dy`: desplazamiento total desde el inicio, en pt. */
-export function mover(g: Gesto, dx: number, dy: number): Paso {
+export function mover(g: Gesto, dx: number, dy: number, t = 0): Paso {
   if (!g.arrastrando && Math.hypot(dx, dy) < UMBRAL_ARRASTRE) return { gesto: g, acciones: [] };
   const primera = !g.arrastrando;
-  const gesto = primera ? { ...g, arrastrando: true } : g;
-  const e = g.vista0.escala;
   const o = g.objetivo;
+  // Un objeto solo se arrastra si se mantuvo presionado; si no, el arrastre mueve la vista.
+  const modo = g.modo ?? (o.tipo === 'mueble' ? (t - g.t0 >= PULSACION_LARGA ? 'editar' : 'vista') : 'editar');
+  const gesto = primera ? { ...g, arrastrando: true, modo } : g;
+  const e = g.vista0.escala;
+  if (o.tipo === 'mueble' && g.mueble0) {
+    if (modo === 'vista') return { gesto, acciones: [], vista: { ...g.vista0, ox: g.vista0.ox + dx, oy: g.vista0.oy + dy } };
+    const acciones: AccionEditor[] = primera ? [{ type: 'iniciarGesto' }] : [];
+    acciones.push({ type: 'moverMueble', id: o.id, x: g.mueble0.x + dx / e, z: g.mueble0.z + dy / e });
+    return { gesto, acciones };
+  }
   const editaAlgo = (o.tipo === 'modulo' || o.tipo === 'asa') ? !!g.mod0 : o.tipo === 'vano' ? !!g.vano0 : false;
   if (!editaAlgo) {   // fondo, "+" o "−": arrastrar desplaza la vista
     return { gesto, acciones: [], vista: { ...g.vista0, ox: g.vista0.ox + dx, oy: g.vista0.oy + dy } };
@@ -229,14 +263,18 @@ export function mover(g: Gesto, dx: number, dy: number): Paso {
 }
 
 /** Dedo arriba. `cancelado`: el sistema interrumpió el gesto (llamada, notificación…): no se crea nada. */
-export function terminar(g: Gesto, c: Contexto, cancelado = false): AccionEditor[] {
+export function terminar(g: Gesto, c: Contexto, cancelado = false, t = 0): AccionEditor[] {
   const o = g.objetivo;
-  if (g.arrastrando) return (o.tipo === 'modulo' || o.tipo === 'asa' || o.tipo === 'vano') ? [{ type: 'terminarGesto' }] : [];
+  if (g.arrastrando) return (o.tipo === 'modulo' || o.tipo === 'asa' || o.tipo === 'vano' || (o.tipo === 'mueble' && g.modo === 'editar')) ? [{ type: 'terminarGesto' }] : [];
   if (cancelado) return [];
   if (g.colocar?.vano) {   // puerta o ventana: en el muro más cercano al toque (el reductor decide cuál)
     const p = aPlano(c.vista, g.px0, g.py0);
     const tolerancia = Math.max(0.3, RADIO_ASA / c.vista.escala);
     return [g.colocar.vano === 'puerta' ? { type: 'ponerPuertaLibre', x: p.x, z: p.z, tolerancia } : { type: 'ponerVentanaLibre', x: p.x, z: p.z, tolerancia }];
+  }
+  if (g.colocar?.mueble) {   // objeto del catálogo: centrado donde se tocó, con las medidas del catálogo
+    const p = aPlano(c.vista, g.px0, g.py0);
+    return [{ type: 'agregarMueble', tipo: g.colocar.tipo, x: p.x, z: p.z, ...g.colocar.mueble }];
   }
   if (g.colocar) {
     const p = aPlano(c.vista, g.px0, g.py0);
@@ -246,6 +284,8 @@ export function terminar(g: Gesto, c: Contexto, cancelado = false): AccionEditor
   if (o.tipo === 'mas') return [{ type: 'crearVanoEnContacto', contacto: o.contacto }];
   if (o.tipo === 'menos') return [o.cerrado ? { type: 'abrirMuro', contacto: o.contacto } : { type: 'cerrarMuro', contacto: o.contacto }];
   if (o.tipo === 'vacio' && c.seleccion) return [{ type: 'seleccionar', seleccion: null }];
+  // Toque corto sobre el objeto ya seleccionado: gira 45°. Mantenerlo sin mover no gira (solo selecciona).
+  if (o.tipo === 'mueble' && g.yaSeleccionado && t - g.t0 < PULSACION_LARGA) return [{ type: 'girarMueble', id: o.id }];
   // Tocar otra vez un espacio ya seleccionado que tiene otro encima o debajo: pasa al siguiente.
   if (o.tipo === 'modulo' && g.yaSeleccionado && g.bajoDedo.length > 1) {
     const i = g.bajoDedo.indexOf(o.id);

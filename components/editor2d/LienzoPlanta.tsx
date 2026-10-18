@@ -15,6 +15,7 @@ import {
 } from './vistaLienzo';
 import { COLOR_CERRADO, T, colorMas, colorTipo, colorVano } from './paleta';
 import { botonesMas, posicionMenos } from './vanosLienzo';
+import { objetoPorId } from '../objetos/catalogoObjetos';
 import { posicionAsa, puedeEstirar } from './gestosLienzo';
 
 const TAM_ASA = 24;   // pt dibujados; se agarra en 44 pt (RADIO_ASA en gestosLienzo.ts)
@@ -29,9 +30,11 @@ interface Props {
   vanosHuerfanos?: Set<string>;
   /** Piso de abajo, punteado y sin rellenar, solo como guía para alinear (no se puede tocar ni editar). */
   referencia?: Modulo[];
+  /** Objeto seleccionado (Entrega 3b). */
+  objetoSeleccionadoId?: string | null;
 }
 
-function LienzoPlanta({ planta, nivel, vista, ancho, alto, seleccionId, vanoSeleccionadoId, vanosHuerfanos, referencia }: Props) {
+function LienzoPlanta({ planta, nivel, vista, ancho, alto, seleccionId, vanoSeleccionadoId, vanosHuerfanos, referencia, objetoSeleccionadoId }: Props) {
   const mods = modulosDelNivel(planta, nivel);
   // Cuartos primero; columnas, vigas y demás estructura encima, para que no queden tapadas.
   const ordenados = [...mods.filter(m => esCuarto(m.tipo)), ...mods.filter(m => !esCuarto(m.tipo))];
@@ -62,6 +65,19 @@ function LienzoPlanta({ planta, nivel, vista, ancho, alto, seleccionId, vanoSele
             m.tipo === 'hueco' && s.hueco]}>
             {/* Piso del catálogo (imagen_piso): se ve bajo la etiqueta, atenuado para que el texto se lea */}
             {m.imagen_piso && esCuarto(m.tipo) ? <Image source={{ uri: m.imagen_piso }} style={s.pisoImagen} resizeMode="cover" /> : null}
+          </View>
+        );
+      })}
+
+      {/* Objetos (3b): su huella real, girada; franja en el lado de atrás (el respaldo del sofá) para ver la orientación */}
+      {(planta.muebles ?? []).filter(o => (o.nivel || 0) === nivel).map(o => {
+        const c = aPantalla(vista, o.x, o.z);
+        const w = o.ancho * vista.escala, h = o.largo * vista.escala;
+        const sel = o.id === objetoSeleccionadoId;
+        return (
+          <View key={`obj${o.id}`} style={[s.objeto, sel && s.objetoSel, { left: c.px - w / 2, top: c.py - h / 2, width: w, height: h, transform: [{ rotate: `${o.rot}deg` }] }]}>
+            <View style={s.objetoAtras} />
+            {Math.min(w, h) >= 14 && <Text style={[s.objetoIcono, { transform: [{ rotate: `${-o.rot}deg` }] }]}>{objetoPorId(o.tipo)?.icono ?? '?'}</Text>}
           </View>
         );
       })}
@@ -167,6 +183,10 @@ const s = StyleSheet.create({
   espacio: { position: 'absolute', borderRadius: 2, overflow: 'hidden' },
   pisoImagen: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, opacity: 0.55 },
   hueco: { borderStyle: 'dashed', backgroundColor: 'transparent' },
+  objeto: { position: 'absolute', borderWidth: 1.5, borderColor: '#C4B5FD', backgroundColor: '#C4B5FD33', borderRadius: 3, alignItems: 'center', justifyContent: 'center', overflow: 'hidden' },
+  objetoSel: { borderColor: '#FFFFFF', borderWidth: 2.5, backgroundColor: '#C4B5FD66' },
+  objetoAtras: { position: 'absolute', top: 0, left: 0, right: 0, height: 3, backgroundColor: '#C4B5FD' },
+  objetoIcono: { fontSize: 13 },
   referencia: { position: 'absolute', borderWidth: 1.5, borderStyle: 'dashed', borderColor: '#8A93AD' },
   etiqueta: { position: 'absolute', alignItems: 'center', justifyContent: 'center', paddingHorizontal: 4 },
   asa: { position: 'absolute', width: TAM_ASA, height: TAM_ASA, borderRadius: TAM_ASA / 2, backgroundColor: T.acento, borderWidth: 3, borderColor: '#FFFFFF' },

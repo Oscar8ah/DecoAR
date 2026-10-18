@@ -7,10 +7,12 @@
  * La cámara por defecto de Viro se queda en el origen mirando a −Z, y la maqueta se coloca delante con
  * tres nodos: alejar (posición), inclinar (X) y girar (Y), con su centro llevado al origen.
  *
- * Datos por viroAppProps: { cajas, transformacion } (camara3d.transformacion).
+ * Datos por viroAppProps: { cajas, transformacion, objetos } (camara3d.transformacion; objetos de
+ * objetos3d.objetosEnEscena, en el MISMO sistema que las cajas de la maqueta).
  */
 import React from 'react';
-import { ViroAmbientLight, ViroBox, ViroDirectionalLight, ViroMaterials, ViroNode, ViroScene } from '@reactvision/react-viro';
+import { ViroAmbientLight, ViroBox, ViroDirectionalLight, ViroMaterials, ViroNode, ViroScene, ViroSphere } from '@reactvision/react-viro';
+import type { PiezaMundo } from '../objetos/catalogoObjetos';
 import type { Caja } from '../plan/planGeometry';
 import type { transformacion } from './camara3d';
 
@@ -22,10 +24,10 @@ ViroMaterials.createMaterials({
 });
 const POR_CLASE: Record<Caja['clase'], string> = { piso: 'v3dPiso', pared: 'v3dPared', dintel: 'v3dDintel' };
 
-/** Material para el color propio de una caja (marco, viga, columna); se crea una sola vez por color. */
+/** Material de un color (marco, viga, columna, objeto); se crea una sola vez por color. */
 const creados = new Set<string>();
-function materialDe(c: Caja): string {
-  if (!c.color || !/^#[0-9a-f]{6}$/i.test(c.color)) return POR_CLASE[c.clase];
+function materialDe(c: { clase?: Caja['clase']; color?: string }): string {
+  if (!c.color || !/^#[0-9a-f]{6}$/i.test(c.color)) return POR_CLASE[c.clase ?? 'pared'];
   const nombre = `v3d_${c.color.slice(1).toLowerCase()}`;
   if (!creados.has(nombre)) {
     ViroMaterials.createMaterials({ [nombre]: { diffuseColor: c.color, lightingModel: 'Lambert' } });
@@ -37,6 +39,7 @@ function materialDe(c: Caja): string {
 export default function Escena3D(props: any) {
   const p = props?.sceneNavigator?.viroAppProps ?? {};
   const cajas: Caja[] = p.cajas ?? [];
+  const objetos: PiezaMundo[] = p.objetos ?? [];
   const t: ReturnType<typeof transformacion> | undefined = p.transformacion;
   if (!t) return <ViroScene />;
   return (
@@ -50,6 +53,10 @@ export default function Escena3D(props: any) {
               {cajas.map(c => (
                 <ViroBox key={c.id} position={c.centro} width={c.tamano[0]} height={c.tamano[1]} length={c.tamano[2]} materials={[materialDe(c)]} />
               ))}
+              {objetos.map((o, i) => o.forma === 'esfera'
+                ? <ViroSphere key={`o${i}`} position={o.pos} radius={o.tam[0] / 2} materials={[materialDe(o)]} opacity={o.opacidad ?? 1} />
+                : <ViroBox key={`o${i}`} position={o.pos} rotation={[0, o.rotY, 0]} width={o.tam[0]} height={o.tam[1]} length={o.tam[2]}
+                    materials={[materialDe(o)]} opacity={o.opacidad ?? 1} />)}
             </ViroNode>
           </ViroNode>
         </ViroNode>

@@ -63,7 +63,14 @@ export type Esquina = 'no' | 'ne' | 'so' | 'se';
 export interface Contacto { modulo_a: string; modulo_b: string; lado: Lado; ini: number; fin: number; exterior: boolean; nivel: number }
 
 /** Lo mismo que guarda la foto del historial web: módulos, vanos, muros cerrados y niveles (visor3d.js:7002). */
-export interface Planta { modulos: Modulo[]; vanos: Vano[]; murosCerrados: string[]; niveles: number; origen?: OrigenPlano }
+export interface Planta { modulos: Modulo[]; vanos: Vano[]; murosCerrados: string[]; niveles: number; origen?: OrigenPlano; muebles?: Mueble[] }
+
+/**
+ * Objeto colocado (Entrega 3b): un mueble o un objeto del catálogo, en el piso `nivel`.
+ * El editor es la fuente de verdad de su identidad, tipo, posición (centro, m), giro (°, horario visto
+ * desde arriba) y medidas. `tipo` es un id del catálogo (components/objetos/catalogoObjetos.ts).
+ */
+export interface Mueble { id: string; tipo: string; x: number; z: number; rot: number; nivel: number; ancho: number; largo: number; alto: number }
 
 // ── P0 compatibilidad: el plano tal como llegó, para exportarlo sin perder nada ──
 /**
@@ -91,7 +98,7 @@ export interface ResultadoExportacion {
   conflictos: string[];
 }
 
-export type Seleccion = { tipo: 'modulo'; id: string } | { tipo: 'vano'; id: string } | null;
+export type Seleccion = { tipo: 'modulo'; id: string } | { tipo: 'vano'; id: string } | { tipo: 'mueble'; id: string } | null;
 
 export interface EditorPlanta {
   planta: Planta;
@@ -140,6 +147,11 @@ export type AccionEditor =
   | { type: 'convertir' }
   // Pisos (visor3d.js:6428-6466). Autorizado por el propietario para P1 (niveles).
   | { type: 'cambiarNivel'; delta: number }
+  // Objetos (Entrega 3b, autorizado): forman parte de la planta y del historial
+  | { type: 'agregarMueble'; tipo: string; x: number; z: number; ancho: number; largo: number; alto: number }
+  | { type: 'moverMueble'; id: string; x: number; z: number }
+  | { type: 'girarMueble'; id: string; grados?: number }
+  | { type: 'eliminarMueble'; id: string }
   | { type: 'agregarNivel' }
   | { type: 'duplicarNivel' }
   | { type: 'cargarPlano'; plano: Plano }
@@ -153,11 +165,12 @@ export type AccionEditor =
 const ajustar = (v: number) => Math.round(v / CUADRICULA) * CUADRICULA;
 export const claveMuro = (o: { modulo_a: string; modulo_b?: string | null; lado: Lado }) => `${o.modulo_a}|${o.modulo_b}|${o.lado}`;
 const nivelDe = (m: { nivel?: number | null }) => m.nivel || 0;
-const foto = (p: Planta) => JSON.stringify({ m: p.modulos, v: p.vanos, c: p.murosCerrados, n: p.niveles, o: p.origen });
+const foto = (p: Planta) => JSON.stringify({ m: p.modulos, v: p.vanos, c: p.murosCerrados, n: p.niveles, o: p.origen, u: p.muebles ?? [] });
 const deFoto = (s: string): Planta => {
   const e = JSON.parse(s);
   const p: Planta = { modulos: e.m, vanos: e.v, murosCerrados: e.c || [], niveles: e.n || 1 };
   if (e.o) p.origen = e.o;   // el original no cambia nunca; solo viaja con la foto
+  if (e.u && e.u.length) p.muebles = e.u;
   return p;
 };
 const capitalizar = (t: string) => t.charAt(0).toUpperCase() + t.slice(1);
@@ -169,9 +182,9 @@ export function editorVacio(): EditorPlanta {
   };
 }
 
-function nuevoId(e: EditorPlanta, prefijo: 'm' | 'v'): { id: string; contador: number } {
+function nuevoId(e: EditorPlanta, prefijo: 'm' | 'v' | 'o'): { id: string; contador: number } {
   let c = e.contador;
-  const usados = new Set([...e.planta.modulos.map(m => String(m.id)), ...e.planta.vanos.map(v => String(v.id))]);
+  const usados = new Set([...e.planta.modulos.map(m => String(m.id)), ...e.planta.vanos.map(v => String(v.id)), ...(e.planta.muebles ?? []).map(o => o.id)]);
   let id: string;
   do { c += 1; id = `${prefijo}${c}`; } while (usados.has(id));
   return { id, contador: c };
@@ -411,7 +424,9 @@ function conSeleccionValida(e0: EditorPlanta): EditorPlanta {
   const e = e0.nivelActivo > ultimo ? { ...e0, nivelActivo: ultimo, seleccion: null } : e0;
   const s = e.seleccion;
   if (!s) return e;
-  const existe = s.tipo === 'modulo' ? e.planta.modulos.some(m => String(m.id) === s.id) : e.planta.vanos.some(v => String(v.id) === s.id);
+  const existe = s.tipo === 'modulo' ? e.planta.modulos.some(m => String(m.id) === s.id)
+    : s.tipo === 'mueble' ? (e.planta.muebles ?? []).some(o => o.id === s.id)
+    : e.planta.vanos.some(v => String(v.id) === s.id);
   return existe ? e : { ...e, seleccion: null };
 }
 
@@ -459,6 +474,14 @@ function conModulo(e: EditorPlanta, id: string, f: (m: Modulo) => Modulo | null)
   const nuevo = f(m);
   if (!nuevo) return e;
   return { ...e, planta: { ...e.planta, modulos: e.planta.modulos.map(x => (x === m ? nuevo : x)) } };
+}
+
+/** Cambia un objeto del piso activo; los de otros pisos no se tocan (igual que los módulos). */
+function conMueble(e: EditorPlanta, id: string, f: (o: Mueble) => Mueble): EditorPlanta {
+  const o = (e.planta.muebles ?? []).find(x => x.id === id);
+  if (!o) return { ...e, mensaje: 'Ese objeto no existe' };
+  if (o.nivel !== e.nivelActivo) return { ...e, mensaje: 'Ese objeto está en otro piso' };
+  return { ...e, planta: { ...e.planta, muebles: (e.planta.muebles ?? []).map(x => (x === o ? f(o) : x)) } };
 }
 
 function conVano(e: EditorPlanta, id: string, f: (v: Vano) => Vano): EditorPlanta {
@@ -720,6 +743,23 @@ function aplicar(e: EditorPlanta, a: AccionEditor): EditorPlanta {
     }
 
     // ── Convertir a 3D ──
+    // ── Objetos (Entrega 3b): en el piso activo; varios del mismo tipo; posición libre (como la web) ──
+    case 'agregarMueble': {
+      const { id, contador } = nuevoId(e, 'o');
+      const r = (v: number) => Math.round(v * 1000) / 1000;
+      const nuevo: Mueble = { id, tipo: a.tipo, x: r(a.x), z: r(a.z), rot: 0, nivel: e.nivelActivo, ancho: a.ancho, largo: a.largo, alto: a.alto };
+      return { ...e, contador, seleccion: { tipo: 'mueble', id }, planta: { ...p, muebles: [...(p.muebles ?? []), nuevo] } };
+    }
+    case 'moverMueble':
+      return conMueble(e, a.id, o => ({ ...o, x: Math.round(a.x * 1000) / 1000, z: Math.round(a.z * 1000) / 1000 }));
+    case 'girarMueble':   // 45° por acción, como rotarMueble de la web (visor3d.js:1979-1983)
+      return conMueble(e, a.id, o => ({ ...o, rot: (((o.rot + (a.grados ?? 45)) % 360) + 360) % 360 }));
+    case 'eliminarMueble': {
+      const o = (p.muebles ?? []).find(x => x.id === a.id);
+      if (!o) return { ...e, mensaje: 'Ese objeto no existe' };
+      if (o.nivel !== e.nivelActivo) return { ...e, mensaje: 'Ese objeto está en otro piso' };
+      return { ...e, seleccion: null, planta: { ...p, muebles: (p.muebles ?? []).filter(x => x.id !== a.id) } };
+    }
     // ── Pisos: igual que la web (visor3d.js:6428-6466) ──
     case 'cambiarNivel': {
       const nuevo = e.nivelActivo + a.delta;

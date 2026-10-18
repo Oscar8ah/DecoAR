@@ -25,6 +25,7 @@ import { T } from './paleta';
 import { vanosQueSeQuitarian } from './vanosLienzo';
 import PanelVano from './PanelVano';
 import SelectorPisos from './SelectorPisos';
+import { CATALOGO_OBJETOS, aproximadas, medidasObjeto, objetoPorId } from '../objetos/catalogoObjetos';
 import { esCuarto } from '../plan/planModel';
 
 interface Props {
@@ -60,6 +61,7 @@ export default function EditorPlanoScreen(p: Props) {
   const [colocar, setColocar] = useState<Pieza | null>(null);
   const [lista, setLista] = useState(false);
   const [listaObras, setListaObras] = useState(false);   // "Agregar objetos de construcción"
+  const [listaObjetos, setListaObjetos] = useState(false);   // "Objetos" (3b)
   const [menu, setMenu] = useState(false);
   const [aviso, setAviso] = useState<string | null>(null);
   const [ajustesVano, setAjustesVano] = useState(false);   // panel del vano desplegado (se recuerda entre vanos)
@@ -98,7 +100,7 @@ export default function EditorPlanoScreen(p: Props) {
     const g = gesto.current, c = ctx.current;
     gesto.current = null;
     if (!g || !c) return;
-    terminar(g, c, cancelado).forEach(despachar);
+    terminar(g, c, cancelado, Date.now()).forEach(despachar);
     if (!cancelado && !g.arrastrando && g.colocar) setColocar(null);
   });
   const respuesta = useRef(PanResponder.create({
@@ -108,13 +110,13 @@ export default function EditorPlanoScreen(p: Props) {
     onPanResponderGrant: e => {
       const c = ctx.current;
       if (!c) return;
-      const r = iniciar(c, e.nativeEvent.locationX, e.nativeEvent.locationY);
+      const r = iniciar(c, e.nativeEvent.locationX, e.nativeEvent.locationY, Date.now());
       gesto.current = r.gesto;
       r.acciones.forEach(despachar);
     },
     onPanResponderMove: (_e, g) => {
       if (!gesto.current || g.numberActiveTouches > 1) return;   // dos dedos: el pellizco llega más adelante
-      const r = mover(gesto.current, g.dx, g.dy);
+      const r = mover(gesto.current, g.dx, g.dy, Date.now());
       gesto.current = r.gesto;
       r.acciones.forEach(despachar);
       if (r.vista) setVista(r.vista);
@@ -143,6 +145,7 @@ export default function EditorPlanoScreen(p: Props) {
     : 'Sin espacios todavía';
   const sel = editor.seleccion?.tipo === 'modulo' ? editor.planta.modulos.find(x => x.id === (editor.seleccion as any).id) : undefined;
   const vanoSel = editor.seleccion?.tipo === 'vano' ? editor.planta.vanos.find(v => String(v.id) === (editor.seleccion as any).id) : undefined;
+  const objSel = editor.seleccion?.tipo === 'mueble' ? (editor.planta.muebles ?? []).find(o => o.id === (editor.seleccion as any).id) : undefined;
   // Vanos entre espacios que ya no se tocan: los calcula la acción 'convertir' real sobre una copia.
   const huerfanos = useMemo(() => vanosQueSeQuitarian(editor), [editor.planta]);   // eslint-disable-line react-hooks/exhaustive-deps
   const nombreDe = (id: string | null | undefined) => {
@@ -174,10 +177,14 @@ export default function EditorPlanoScreen(p: Props) {
 
       {/* Herramientas: espacios y objetos de construcción */}
       <View style={s.herramientas}>
-        <Pressable style={({ pressed }) => [s.colocar, pressed && s.pulsado]} onPress={() => { setListaObras(false); setLista(v => !v); }} accessibilityRole="button">
+        <Pressable style={({ pressed }) => [s.colocar, pressed && s.pulsado]} onPress={() => { setListaObras(false); setListaObjetos(false); setLista(v => !v); }} accessibilityRole="button">
           <Text style={s.colocarTexto}>Colocar espacio</Text>
         </Pressable>
-        <Pressable style={({ pressed }) => [s.obras, pressed && s.pulsado]} onPress={() => { setLista(false); setListaObras(v => !v); }}
+        <Pressable style={({ pressed }) => [s.obras, pressed && s.pulsado]} onPress={() => { setLista(false); setListaObras(false); setListaObjetos(v => !v); }}
+          accessibilityRole="button" accessibilityLabel="Agregar objetos y muebles">
+          <Text style={s.obrasTexto}>Objetos</Text>
+        </Pressable>
+        <Pressable style={({ pressed }) => [s.obras, pressed && s.pulsado]} onPress={() => { setLista(false); setListaObjetos(false); setListaObras(v => !v); }}
           accessibilityRole="button" accessibilityLabel="Agregar objetos de construcción">
           <Text style={s.obrasTexto}>Construcción</Text>
         </Pressable>
@@ -188,7 +195,7 @@ export default function EditorPlanoScreen(p: Props) {
         <View style={StyleSheet.absoluteFill} {...respuesta.panHandlers}>
           {vista && lienzo.ancho > 0 && (
             <LienzoPlanta planta={editor.planta} nivel={nivel} vista={vista} ancho={lienzo.ancho} alto={lienzo.alto}
-              seleccionId={sel ? String(sel.id) : null} vanoSeleccionadoId={vanoSel ? String(vanoSel.id) : null}
+              seleccionId={sel ? String(sel.id) : null} vanoSeleccionadoId={vanoSel ? String(vanoSel.id) : null} objetoSeleccionadoId={objSel?.id ?? null}
               vanosHuerfanos={huerfanos} referencia={nivel > 0 ? modulosDelNivel(editor.planta, nivel - 1) : undefined} />
           )}
         </View>
@@ -286,6 +293,29 @@ export default function EditorPlanoScreen(p: Props) {
         </View>
       )}
 
+      {/* Objeto seleccionado (3b): medidas del editor, Girar 45° y Borrar */}
+      {objSel && (() => {
+        const cat = objetoPorId(objSel.tipo);
+        return (
+          <View style={s.seleccionDos}>
+            <View style={s.seleccionTexto}>
+              <Text style={s.seleccionNombre} numberOfLines={1}>{cat ? `${cat.icono} ${cat.nombre}` : objSel.tipo}</Text>
+              <Text style={s.seleccionMedidas} numberOfLines={2}>
+                {metros(objSel.ancho)} × {metros(objSel.largo)} m, {metros(objSel.alto)} m de alto. Toca otra vez para girar; mantén presionado y arrastra para moverlo.
+              </Text>
+            </View>
+            <View style={s.seleccionBotones}>
+              <Pressable style={({ pressed }) => [s.accion, pressed && s.pulsado]} onPress={() => despachar({ type: 'girarMueble', id: objSel.id })} accessibilityRole="button">
+                <Text style={s.accionTexto}>Girar 45°</Text>
+              </Pressable>
+              <Pressable style={({ pressed }) => [s.accion, s.borrar, pressed && s.pulsado]} onPress={() => despachar({ type: 'eliminarMueble', id: objSel.id })} accessibilityRole="button">
+                <Text style={s.borrarTexto}>Borrar</Text>
+              </Pressable>
+            </View>
+          </View>
+        );
+      })()}
+
       {/* Vano seleccionado: panel compacto y, al desplegarlo, ancho, posición, alto y puerta (1b-3b) */}
       {vanoSel && (() => {
         const b = nombreDe(vanoSel.modulo_b);
@@ -316,6 +346,22 @@ export default function EditorPlanoScreen(p: Props) {
               </Pressable>
             ))}
           </View>
+        </>
+      )}
+
+      {listaObjetos && (
+        <>
+          <Pressable style={StyleSheet.absoluteFill} onPress={() => setListaObjetos(false)} accessibilityLabel="Cerrar objetos" />
+          <ScrollView style={[s.lista, s.listaObras, { top: m.arriba + 108 }]} contentContainerStyle={{ gap: 8 }}>
+            <Text style={s.grupo}>OBJETOS Y MUEBLES</Text>
+            {CATALOGO_OBJETOS.map(o => (
+              <Pressable key={o.id} style={({ pressed }) => [s.obra, pressed && s.pulsado]} accessibilityRole="button"
+                onPress={() => { setListaObjetos(false); elegirEspacio({ tipo: o.id, etiqueta: `${o.icono} ${o.nombre}`, mueble: medidasObjeto(o) }); }}>
+                <Text style={s.piezaTexto}>{o.icono} {o.nombre}</Text>
+                <Text style={[s.estado3D, s.no3D]}>{o.hint}{aproximadas(o) ? '. En 3D, sus piezas redondas se ven cuadradas.' : ''}</Text>
+              </Pressable>
+            ))}
+          </ScrollView>
         </>
       )}
 
@@ -389,11 +435,11 @@ const s = StyleSheet.create({
   titulo: { color: T.texto, fontSize: 20, fontWeight: '700' },
   subtitulo: { color: T.textoSuave, fontSize: 13, marginTop: 3, fontVariant: ['tabular-nums'] },
   herramientas: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingHorizontal: 14, paddingBottom: 12 },
-  colocar: { minHeight: 42, borderRadius: 12, backgroundColor: T.acento, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 16 },
-  colocarTexto: { color: '#FFFFFF', fontSize: 15, fontWeight: '700' },
+  colocar: { minHeight: 42, borderRadius: 12, backgroundColor: T.acento, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 12 },
+  colocarTexto: { color: '#FFFFFF', fontSize: 14, fontWeight: '700' },
   obras: { minHeight: 42, borderRadius: 12, backgroundColor: T.boton, borderWidth: 1, borderColor: '#4A5268', alignItems: 'center',
-    justifyContent: 'center', paddingHorizontal: 16 },
-  obrasTexto: { color: T.texto, fontSize: 15, fontWeight: '700' },
+    justifyContent: 'center', paddingHorizontal: 12 },
+  obrasTexto: { color: T.texto, fontSize: 14, fontWeight: '700' },
   zoom: { position: 'absolute', right: 12, bottom: 12, gap: 8 },
   zoomIzquierda: { right: undefined, left: 12 },
   zoomBoton: { width: 46, height: 46, borderRadius: 23, backgroundColor: '#222838E6', borderWidth: 1, borderColor: '#39415A',
