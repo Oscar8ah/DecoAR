@@ -25,7 +25,12 @@ export const colorTipo = (tipo: string) => (esCuarto(tipo) ? POR_TIPO[tipo] ?? P
 
 /** Colores de la web (visor3d.js:7565): arco verde, vano celeste, puerta naranja. Ventana: extensión de DecoAR. */
 const POR_VANO: Record<string, string> = { arco: '#22C55E', vano: '#38BDF8', puerta: '#F59E0B', ventana: '#67E8F9' };
-export const colorVano = (tipo: string | undefined) => POR_VANO[tipo ?? ''] ?? POR_VANO.arco;
+export const colorVano = (tipo: string | undefined, estiloVentana?: string) =>
+  tipo === 'ventana' && estiloVentana ? POR_ESTILO_VENTANA[estiloVentana] ?? POR_VANO.ventana : POR_VANO[tipo ?? ''] ?? POR_VANO.arco;
+/** Ventanas (Entrega 3): el estilo se ve en el plano 2D (en 3D todavía no hay marco ni vidrio). */
+const POR_ESTILO_VENTANA: Record<string, string> = { blanca: '#F1F5F9', negra: '#1F2937', balcon: '#67E8F9' };
+/** "−" y muro cerrado. */
+export const COLOR_CERRADO = '#F87171';
 
 /** "+" de un muro (visor3d.js:7543): celeste entre cuartos, verde lima hacia un espacio exterior. */
 export const colorMas = (exterior: boolean) => (exterior ? '#A3E635' : '#38BDF8');

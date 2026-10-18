@@ -12,8 +12,17 @@ import type { Contacto, EditorPlanta, Planta } from '../plan/planEditor';
 import { claveMuro, contactosPlanta, reducirEditor } from '../plan/planEditor';
 import type { Vano } from '../plan/planModel';
 
-/** Un "+" sobre un muro compartido: dónde está (metros del plano) y qué contacto crea al tocarlo. */
-export interface BotonMas { contacto: Contacto; x: number; z: number; exterior: boolean }
+/**
+ * Un "+" sobre un muro compartido: dónde está (metros del plano) y qué contacto crea al tocarlo.
+ * `cerrado`: el usuario marcó "−" en ese muro (está en murosCerrados): no tendrá paso al generar el 3D.
+ */
+export interface BotonMas { contacto: Contacto; x: number; z: number; exterior: boolean; cerrado: boolean }
+
+/** El "−" va junto al "+", a lo largo del muro, fuera del área táctil del "+" (22 pt): nunca se confunden. */
+export const SEPARACION_MENOS = 40;   // pt entre el centro del "+" y el del "−"
+export const RADIO_MENOS = 17;        // pt: se toca en un círculo de 34 pt
+export const posicionMenos = (pMas: { px: number; py: number }, lado: Contacto['lado']) =>
+  (lado === 'norte' || lado === 'sur') ? { px: pMas.px + SEPARACION_MENOS, py: pMas.py } : { px: pMas.px, py: pMas.py + SEPARACION_MENOS };
 
 /** Los "+" del piso visible: un contacto entre espacios que no tiene ningún vano en ese muro. */
 export function botonesMas(p: Planta, nivel: number): BotonMas[] {
@@ -28,7 +37,7 @@ export function botonesMas(p: Planta, nivel: number): BotonMas[] {
       : c.lado === 'sur' ? { x: med, z: a.z + a.largo }
       : c.lado === 'oeste' ? { x: a.x, z: med }
       : { x: a.x + a.ancho, z: med };
-    out.push({ contacto: c, ...pos, exterior: !!c.exterior });
+    out.push({ contacto: c, ...pos, exterior: !!c.exterior, cerrado: p.murosCerrados.includes(claveMuro(c)) });
   }
   return out;
 }

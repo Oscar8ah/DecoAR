@@ -19,7 +19,7 @@ import { MEDIDAS_DEFECTO } from '../plan/planEditor';
 import type { Modulo } from '../plan/planModel';
 import { esCuarto } from '../plan/planModel';
 import { Vista, aPantalla, aPlano, modulosDelNivel, tramoVano, vanosDelNivel } from './vistaLienzo';
-import { botonesMas, ejeVano, tieneId } from './vanosLienzo';
+import { RADIO_MENOS, botonesMas, ejeVano, posicionMenos, tieneId } from './vanosLienzo';
 
 export const RADIO_ASA = 22;          // pt: el asa se puede agarrar en un círculo de 44 pt (mínimo táctil de iOS)
 export const MIN_OBJETIVO = 44;       // pt: un espacio muy delgado (una viga) se puede tocar en 44 pt
@@ -27,8 +27,11 @@ export const UMBRAL_ARRASTRE = 8;     // pt: por debajo es un toque; el temblor 
 export const RADIO_MAS = 22;          // pt: un "+" se toca en un círculo de 44 pt
 export const TOLERANCIA_VANO = 22;    // pt a cada lado de la barra del vano
 
-/** Lo que se quiere colocar al tocar el lienzo (tipo del reductor y nombre opcional, p. ej. Comedor). */
-export interface Pieza { tipo: string; nombre?: string; etiqueta: string }
+/**
+ * Lo que se quiere colocar al tocar el lienzo (tipo del reductor y nombre opcional, p. ej. Comedor).
+ * `vano`: puerta o ventana, que se ponen tocando un MURO (ponerPuertaLibre / ponerVentanaLibre).
+ */
+export interface Pieza { tipo: string; nombre?: string; etiqueta: string; vano?: 'puerta' | 'ventana' }
 
 /** Tipos de espacio del botón "Colocar espacio". Mismos tipos y nombres que la paleta de E2 (EditorPanel). */
 export const ESPACIOS: Pieza[] = [
@@ -62,6 +65,16 @@ export const CONSTRUCCION: PiezaConstruccion[] = [
     nota3D: 'Andén, losa, patio o zona verde alrededor de la casa: va sobre el suelo, no levanta muros ni suma área. Aún no se ve en 3D.' },
 ];
 
+/**
+ * Aberturas de "Construcción" (Entrega 3): se colocan tocando un muro, interior o exterior.
+ * Estado 3D comprobado con generarMaqueta en tools/test-muros-aberturas.ts.
+ */
+export const ABERTURAS: PiezaConstruccion[] = [
+  { grupo: 'Aberturas', etiqueta: '🚪 Puerta', tipo: 'puerta', vano: 'puerta', estado3D: 'parcial', nota3D: 'Se ven el hueco y el marco en 3D; la hoja aún no.' },
+  { grupo: 'Aberturas', etiqueta: '🪟 Ventana', tipo: 'ventana', vano: 'ventana', estado3D: 'parcial',
+    nota3D: 'En 3D se ve el hueco con muro abajo y arriba; sin marco ni vidrio aún.' },
+];
+
 /** Nota 3D del tipo de un elemento ya colocado (null si es un cuarto). */
 export const notaConstruccion = (tipo: string | null | undefined) => CONSTRUCCION.find(c => c.tipo === tipo)?.nota3D ?? null;
 
@@ -74,7 +87,8 @@ export const puedeEstirar = (m: Pick<Modulo, 'tipo'>) => !SIN_ESTIRAR.has(m.tipo
 
 export type Objetivo =
   | { tipo: 'asa'; id: string } | { tipo: 'modulo'; id: string }
-  | { tipo: 'mas'; contacto: Contacto } | { tipo: 'vano'; id: string } | { tipo: 'vacio' };
+  | { tipo: 'mas'; contacto: Contacto } | { tipo: 'menos'; contacto: Contacto; cerrado: boolean }
+  | { tipo: 'vano'; id: string } | { tipo: 'vacio' };
 
 /** Esquina SE del módulo en pantalla: donde se dibuja y se agarra el asa de estirar. */
 export function posicionAsa(v: Vista, m: Modulo) { return aPantalla(v, m.x + m.ancho, m.z + m.largo); }
@@ -133,6 +147,10 @@ export function queToca(v: Vista, p: Planta, nivel: number, sel: Seleccion, px: 
     if (d <= RADIO_MAS && (!mas || d < mas.d)) mas = { b, d };
   }
   if (mas) return { tipo: 'mas', contacto: mas.b.contacto };
+  for (const b of botonesMas(p, nivel)) {
+    const q = posicionMenos(aPantalla(v, b.x, b.z), b.contacto.lado);
+    if (Math.hypot(px - q.px, py - q.py) <= RADIO_MENOS) return { tipo: 'menos', contacto: b.contacto, cerrado: b.cerrado };
+  }
   const vano = vanoBajoDedo(v, p, nivel, px, py);
   if (vano) return { tipo: 'vano', id: vano };
   const c = candidatos(v, p, nivel, px, py);
@@ -194,7 +212,7 @@ export function mover(g: Gesto, dx: number, dy: number): Paso {
   const e = g.vista0.escala;
   const o = g.objetivo;
   const editaAlgo = (o.tipo === 'modulo' || o.tipo === 'asa') ? !!g.mod0 : o.tipo === 'vano' ? !!g.vano0 : false;
-  if (!editaAlgo) {   // fondo o "+": arrastrar desplaza la vista
+  if (!editaAlgo) {   // fondo, "+" o "−": arrastrar desplaza la vista
     return { gesto, acciones: [], vista: { ...g.vista0, ox: g.vista0.ox + dx, oy: g.vista0.oy + dy } };
   }
   const acciones: AccionEditor[] = primera ? [{ type: 'iniciarGesto' }] : [];
@@ -215,12 +233,18 @@ export function terminar(g: Gesto, c: Contexto, cancelado = false): AccionEditor
   const o = g.objetivo;
   if (g.arrastrando) return (o.tipo === 'modulo' || o.tipo === 'asa' || o.tipo === 'vano') ? [{ type: 'terminarGesto' }] : [];
   if (cancelado) return [];
+  if (g.colocar?.vano) {   // puerta o ventana: en el muro más cercano al toque (el reductor decide cuál)
+    const p = aPlano(c.vista, g.px0, g.py0);
+    const tolerancia = Math.max(0.3, RADIO_ASA / c.vista.escala);
+    return [g.colocar.vano === 'puerta' ? { type: 'ponerPuertaLibre', x: p.x, z: p.z, tolerancia } : { type: 'ponerVentanaLibre', x: p.x, z: p.z, tolerancia }];
+  }
   if (g.colocar) {
     const p = aPlano(c.vista, g.px0, g.py0);
     const esq = esquinaParaColocar(g.colocar.tipo, p.x, p.z);
     return [{ type: 'agregarModulo', tipo: g.colocar.tipo, nombre: g.colocar.nombre, x: esq.x, z: esq.z }];
   }
   if (o.tipo === 'mas') return [{ type: 'crearVanoEnContacto', contacto: o.contacto }];
+  if (o.tipo === 'menos') return [o.cerrado ? { type: 'abrirMuro', contacto: o.contacto } : { type: 'cerrarMuro', contacto: o.contacto }];
   if (o.tipo === 'vacio' && c.seleccion) return [{ type: 'seleccionar', seleccion: null }];
   // Tocar otra vez un espacio ya seleccionado que tiene otro encima o debajo: pasa al siguiente.
   if (o.tipo === 'modulo' && g.yaSeleccionado && g.bajoDedo.length > 1) {

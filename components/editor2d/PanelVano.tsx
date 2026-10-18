@@ -8,7 +8,8 @@
  */
 import React, { useState } from 'react';
 import { Pressable, ScrollView, StyleSheet, Text, View, useWindowDimensions } from 'react-native';
-import type { AccionEditor } from '../plan/planEditor';
+import type { AccionEditor, VanoConEstilo } from '../plan/planEditor';
+import { VENTANA, rangosVentana } from '../plan/planEditor';
 import type { Vano } from '../plan/planModel';
 import { Deslizador, PosicionEnMuro } from './Deslizador';
 import {
@@ -26,15 +27,24 @@ interface Props {
   despachar: (a: AccionEditor) => void;
   expandido: boolean;
   onExpandir: (v: boolean) => void;
+  /** Alto del muro donde está (para los rangos de una ventana). */
+  altoMuro: number;
 }
 
-export default function PanelVano({ vano: v, donde, huerfano, despachar, expandido, onExpandir }: Props) {
+const ESTILOS_VENTANA: { valor: 'blanca' | 'negra' | 'balcon'; etiqueta: string }[] = [
+  { valor: 'blanca', etiqueta: 'Blanca' }, { valor: 'negra', etiqueta: 'Negra' }, { valor: 'balcon', etiqueta: 'Balcón' },
+];
+
+export default function PanelVano({ vano: v, donde, huerfano, despachar, expandido, onExpandir, altoMuro }: Props) {
   const { height } = useWindowDimensions();
   const [deslizando, setDeslizando] = useState(false);
   const id = String(v.id);
   const tipo = v.tipo ?? 'arco';
   const color = colorVano(tipo);
-  const actualizar = (campo: 'ancho' | 'tipo' | 'bisagra' | 'sentido' | 'estilo' | 'apertura' | 'alto', valor: string | number) =>
+  const esVentana = tipo === 'ventana';
+  const estiloV = (v as VanoConEstilo).estiloVentana ?? 'blanca';
+  const rV = esVentana ? rangosVentana(v as VanoConEstilo, altoMuro) : null;
+  const actualizar = (campo: 'ancho' | 'tipo' | 'bisagra' | 'sentido' | 'estilo' | 'apertura' | 'alto' | 'antepecho' | 'estiloVentana', valor: string | number) =>
     despachar({ type: 'actualizarVano', id, campo, valor });
   // Un deslizamiento completo = un paso de deshacer; y mientras dura, el panel no se desplaza.
   const inicio = () => { setDeslizando(true); despachar({ type: 'iniciarGesto' }); };
@@ -50,6 +60,7 @@ export default function PanelVano({ vano: v, donde, huerfano, despachar, expandi
           <Text style={s.titulo} numberOfLines={1}>{NOMBRE_VANO[tipo] ?? tipo} {donde}</Text>
           <Text style={[s.sub, huerfano && s.alerta]} numberOfLines={2}>
             {huerfano ? 'Estos espacios ya no se tocan: el vano se quitará al generar el 3D.'
+              : esVentana ? `${metros(v.ancho)} × ${metros(v.alto ?? VENTANA.altoDef)} m, a ${metros(v.alto_antepecho ?? 0)} m del piso.`
               : `${metros(v.ancho)} m de ancho. ${DESCRIPCION[tipo] ?? ''}`}
           </Text>
         </View>
@@ -59,7 +70,14 @@ export default function PanelVano({ vano: v, donde, huerfano, despachar, expandi
       </View>
 
       <View style={s.tipos}>
-        {(['arco', 'vano', 'puerta'] as const).map(tp => {
+        {esVentana ? ESTILOS_VENTANA.map(e => (
+          <Pressable key={e.valor} accessibilityRole="button" accessibilityState={{ selected: estiloV === e.valor }}
+            style={({ pressed }) => [s.chip, s.flex, estiloV === e.valor && { borderColor: colorVano('ventana', e.valor), backgroundColor: '#FFFFFF1A' }, pressed && s.pulsado]}
+            onPress={() => { if (estiloV !== e.valor) actualizar('estiloVentana', e.valor); }}>
+            <View style={[s.muestra, s.muestraVentana, { backgroundColor: colorVano('ventana', e.valor) }]} />
+            <Text style={s.chipTexto}>{e.etiqueta}</Text>
+          </Pressable>
+        )) : (['arco', 'vano', 'puerta'] as const).map(tp => {
           const activo = tipo === tp;
           return (
             <Pressable key={tp} accessibilityRole="button" accessibilityState={{ selected: activo }}
@@ -87,7 +105,10 @@ export default function PanelVano({ vano: v, donde, huerfano, despachar, expandi
               <Deslizador valor={v.ancho} min={rA.min} max={rA.max} color={color} etiqueta="Ancho del vano" pasoAccesible={PASO_ANCHO}
                 cuantizar={x => cuantizar(x, PASO_ANCHO, rA.min, rA.max)} onCambio={x => actualizar('ancho', x)} onInicio={inicio} onFin={fin} />
               <View style={s.rapidos}>
-                <Rapido texto={`Puerta ${metros(anchoRapido(v, 'puerta')!)} m`} onPress={() => actualizar('ancho', anchoRapido(v, 'puerta')!)} />
+                {esVentana
+                  ? <Rapido texto={`Ventana ${metros(Math.min(estiloV === 'balcon' ? VENTANA.anchoBalcon : VENTANA.anchoDef, rA.max))} m`}
+                      onPress={() => actualizar('ancho', Math.min(estiloV === 'balcon' ? VENTANA.anchoBalcon : VENTANA.anchoDef, rA.max))} />
+                  : <Rapido texto={`Puerta ${metros(anchoRapido(v, 'puerta')!)} m`} onPress={() => actualizar('ancho', anchoRapido(v, 'puerta')!)} />}
                 <Rapido texto="Toda la pared" onPress={() => actualizar('ancho', anchoRapido(v, 'pared')!)} />
               </View>
 
@@ -97,6 +118,21 @@ export default function PanelVano({ vano: v, donde, huerfano, despachar, expandi
               <View style={s.rapidos}>
                 <Rapido texto="Centrar" onPress={() => despachar({ type: 'moverVano', id, u: centroDelTramo(v)! })} />
               </View>
+            </>
+          )}
+
+          {esVentana && rV && (
+            <>
+              <Text style={[s.etiqueta, s.separado]}>Alto de la ventana: <Text style={s.valor}>{metros(v.alto ?? VENTANA.altoDef)} m</Text> (máx. {metros(rV.alto.max)} m)</Text>
+              <Deslizador valor={v.alto ?? VENTANA.altoDef} min={rV.alto.min} max={rV.alto.max} color={color} etiqueta="Alto de la ventana" pasoAccesible={0.05}
+                cuantizar={x => cuantizar(x, 0.05, rV.alto.min, rV.alto.max)} onCambio={x => actualizar('alto', x)} onInicio={inicio} onFin={fin} />
+              <Text style={[s.etiqueta, s.separado]}>Altura desde el piso: <Text style={s.valor}>{metros(v.alto_antepecho ?? 0)} m</Text></Text>
+              {estiloV === 'balcon'
+                ? <Text style={s.nota}>El balcón va desde el piso.</Text>
+                : <Deslizador valor={v.alto_antepecho ?? VENTANA.antepechoDef} min={rV.antepecho.min} max={rV.antepecho.max} color={color}
+                    etiqueta="Altura de la ventana desde el piso" pasoAccesible={0.05}
+                    cuantizar={x => cuantizar(x, 0.05, rV.antepecho.min, rV.antepecho.max)} onCambio={x => actualizar('antepecho', x)} onInicio={inicio} onFin={fin} />}
+              <Text style={[s.nota, s.separado]}>En 3D se ve el hueco con muro abajo y arriba; el marco, el vidrio y el estilo todavía no se dibujan.</Text>
             </>
           )}
 
@@ -174,6 +210,7 @@ const s = StyleSheet.create({
   ajustes: { paddingHorizontal: 10 },
   ajustesActivo: { borderColor: '#6B7493' },
   muestra: { width: 12, height: 5, borderRadius: 2 },
+  muestraVentana: { borderWidth: 1, borderColor: '#94A3B8', height: 7 },
   chipTexto: { color: T.texto, fontSize: 14.5, fontWeight: '600' },
   ajustesCont: { paddingHorizontal: 14, paddingTop: 12, paddingBottom: 6 },
   etiqueta: { color: T.textoSuave, fontSize: 13.5 },

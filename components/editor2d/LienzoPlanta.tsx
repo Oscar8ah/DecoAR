@@ -13,12 +13,13 @@ import {
   ALTO_TEXTO_COTA, Vista, aPantalla, cotasGenerales, cuadricula, etiquetaCabe, extension, modulosDelNivel,
   nombreVisible, textoMedidas, tipoVisual, tramoVano, vanosDelNivel,
 } from './vistaLienzo';
-import { T, colorMas, colorTipo, colorVano } from './paleta';
-import { botonesMas } from './vanosLienzo';
+import { COLOR_CERRADO, T, colorMas, colorTipo, colorVano } from './paleta';
+import { botonesMas, posicionMenos } from './vanosLienzo';
 import { posicionAsa, puedeEstirar } from './gestosLienzo';
 
 const TAM_ASA = 24;   // pt dibujados; se agarra en 44 pt (RADIO_ASA en gestosLienzo.ts)
 const TAM_MAS = 22;   // pt dibujados; se toca en 44 pt (RADIO_MAS en gestosLienzo.ts)
+const TAM_MENOS = 20; // pt dibujados; se toca en 2 × RADIO_MENOS (vanosLienzo.ts)
 
 interface Props {
   planta: Planta; nivel: number; vista: Vista; ancho: number; alto: number;
@@ -93,21 +94,32 @@ function LienzoPlanta({ planta, nivel, vista, ancho, alto, seleccionId, vanoSele
         const huerfano = v.id !== undefined && !!vanosHuerfanos?.has(String(v.id));
         const g = sel ? 9 : 6;
         return (
-          <View key={`vano${String(v.id ?? i)}`} style={[s.vano, { backgroundColor: colorVano(v.tipo), opacity: huerfano ? 0.4 : 1 },
+          <View key={`vano${String(v.id ?? i)}`} style={[s.vano, { backgroundColor: colorVano(v.tipo, (v as { estiloVentana?: string }).estiloVentana), opacity: huerfano ? 0.4 : 1 },
+            v.tipo === 'ventana' && s.ventana,
             sel && s.vanoSeleccionado,
             horizontal ? { left: a.px, top: a.py - g / 2, width: b.px - a.px, height: g }
                        : { left: a.px - g / 2, top: a.py, width: g, height: b.py - a.py }]} />
         );
       })}
 
-      {/* "+" en cada muro compartido sin vano del piso visible */}
+      {/* Muros compartidos sin vano del piso visible: "+" (poner paso) y "−" (cerrar a propósito) */}
       {botonesMas(planta, nivel).map((m, i) => {
         const q = aPantalla(vista, m.x, m.z);
         const color = colorMas(m.exterior);
+        const menos = posicionMenos(q, m.contacto.lado);
+        const horizontal = m.contacto.lado === 'norte' || m.contacto.lado === 'sur';
+        const a = horizontal ? aPantalla(vista, m.contacto.ini, m.z) : aPantalla(vista, m.x, m.contacto.ini);
+        const b = horizontal ? aPantalla(vista, m.contacto.fin, m.z) : aPantalla(vista, m.x, m.contacto.fin);
         return (
-          <View key={`mas${i}`} style={[s.mas, { left: q.px - TAM_MAS / 2, top: q.py - TAM_MAS / 2, borderColor: color }]}>
-            <Text style={[s.masTexto, { color }]}>+</Text>
-          </View>
+          <React.Fragment key={`mas${i}`}>
+            {m.cerrado && <View style={[s.cerrado, horizontal ? { left: a.px, top: a.py - 2, width: b.px - a.px, height: 4 } : { left: a.px - 2, top: a.py, width: 4, height: b.py - a.py }]} />}
+            <View style={[s.mas, { left: q.px - TAM_MAS / 2, top: q.py - TAM_MAS / 2, borderColor: color }]}>
+              <Text style={[s.masTexto, { color }]}>+</Text>
+            </View>
+            <View style={[s.menos, { left: menos.px - TAM_MENOS / 2, top: menos.py - TAM_MENOS / 2 }, m.cerrado && s.menosCerrado]}>
+              <Text style={[s.menosTexto, m.cerrado && s.menosTextoCerrado]}>{m.cerrado ? '×' : '−'}</Text>
+            </View>
+          </React.Fragment>
         );
       })}
 
@@ -167,6 +179,13 @@ const s = StyleSheet.create({
   mas: { position: 'absolute', width: TAM_MAS, height: TAM_MAS, borderRadius: TAM_MAS / 2, borderWidth: 2,
     backgroundColor: '#0F0F1A', alignItems: 'center', justifyContent: 'center' },
   masTexto: { fontSize: 16, fontWeight: '700', lineHeight: 18, marginTop: -1 },
+  menos: { position: 'absolute', width: TAM_MENOS, height: TAM_MENOS, borderRadius: TAM_MENOS / 2, borderWidth: 2, borderColor: '#8A93AD',
+    backgroundColor: '#0F0F1A', alignItems: 'center', justifyContent: 'center' },
+  menosCerrado: { borderColor: COLOR_CERRADO, backgroundColor: COLOR_CERRADO },
+  menosTexto: { color: '#C2C8D8', fontSize: 15, fontWeight: '700', lineHeight: 17, marginTop: -1 },
+  menosTextoCerrado: { color: '#FFFFFF' },
+  cerrado: { position: 'absolute', backgroundColor: COLOR_CERRADO, borderRadius: 2, opacity: 0.85 },
+  ventana: { borderWidth: 1, borderColor: '#94A3B8' },
   cotaH: { position: 'absolute', height: 1.5, backgroundColor: T.cota },
   cotaV: { position: 'absolute', width: 1.5, backgroundColor: T.cota },
   tope: { position: 'absolute', width: 2, height: 11, backgroundColor: T.cota },

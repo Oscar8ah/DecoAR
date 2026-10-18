@@ -104,7 +104,20 @@ export interface EditorPlanta {
   mensaje: string | null;     // aviso para la interfaz (el equivalente a mostrarToast)
 }
 
-export type CampoVano = 'ancho' | 'tipo' | 'bisagra' | 'sentido' | 'estilo' | 'apertura' | 'alto';
+export type CampoVano = 'ancho' | 'tipo' | 'bisagra' | 'sentido' | 'estilo' | 'apertura' | 'alto'
+  | 'antepecho' | 'estiloVentana';   // ventanas (Entrega 3)
+
+// ── Ventanas (Entrega 3). Valores de la web: visor3d.js abrirPanelVentana (~l.130-131), visor3d.html
+//    (vdpAncho 0.4-8, vdpAlto 0.3-2.4) y su arrastre (~l.486-494: altura libre entre 0.25 m del piso y
+//    0.15 m del techo; el balcón va desde el piso). 'ventana' y alto_antepecho ya existen en planModel.
+export type EstiloVentana = 'blanca' | 'negra' | 'balcon';
+export const VENTANA = {
+  anchoDef: 1.2, altoDef: 0.9, anchoBalcon: 2.4, altoBalcon: 2.2,
+  altoMin: 0.3, altoMax: 2.4, antepechoMin: 0.25, holguraTecho: 0.15,
+  antepechoDef: 0.9,   // DecoAR: altura inicial (en la web la ventana queda donde se arrastre)
+};
+/** El estilo de la ventana no está declarado en planModel (protegido): extensión de DecoAR, como 'ventana'. */
+export type VanoConEstilo = Vano & { estiloVentana?: EstiloVentana };
 
 export type AccionEditor =
   | { type: 'agregarModulo'; tipo: string; x?: number; z?: number; nombre?: string }   // nombre: p. ej. 'Comedor' sobre el tipo 'zona'
@@ -116,6 +129,10 @@ export type AccionEditor =
   | { type: 'eliminarModulo'; id: string }
   | { type: 'crearVanoEnContacto'; contacto: Contacto }
   | { type: 'ponerPuertaLibre'; x: number; z: number; tolerancia?: number }
+  // Entrega 3 (autorizado): decisión explícita sobre un muro compartido, y ventanas en cualquier muro
+  | { type: 'cerrarMuro'; contacto: Contacto }
+  | { type: 'abrirMuro'; contacto: Contacto }
+  | { type: 'ponerVentanaLibre'; x: number; z: number; tolerancia?: number; estilo?: EstiloVentana }
   | { type: 'moverVano'; id: string; u: number }                                    // coordenada a lo largo de su pared
   | { type: 'actualizarVano'; id: string; campo: CampoVano; valor: string | number }
   | { type: 'duplicarVano'; id: string }
@@ -451,7 +468,7 @@ function conVano(e: EditorPlanta, id: string, f: (v: Vano) => Vano): EditorPlant
 }
 
 /** Puerto de `actualizarVano` (visor3d.js:7213-7248), campo por campo. */
-function actualizarVano(v0: Vano, campo: CampoVano, valor: string | number): Vano {
+function actualizarVano(v0: Vano, campo: CampoVano, valor: string | number, altoMuro = ALTO_MODULO_DEF): Vano {
   const v: Vano = { ...v0 };
   const limIni = v.limIni ?? 0, limFin = v.limFin ?? v.centro + v.ancho / 2;
   if (campo === 'ancho') {
@@ -480,9 +497,100 @@ function actualizarVano(v0: Vano, campo: CampoVano, valor: string | number): Van
     v.anguloApertura = ang;
     v.abierta = ang > 0;
   } else if (campo === 'alto') {
+    if (v.tipo === 'ventana') return ajustarVentana({ ...v, alto: Number(valor) }, altoMuro);
     v.alto = Math.max(1.6, Math.min(2.5, Number(valor)));
+  } else if (campo === 'antepecho') {
+    if (v.tipo === 'ventana') return ajustarVentana({ ...v, alto_antepecho: Number(valor) }, altoMuro);
+  } else if (campo === 'estiloVentana') {
+    if (v.tipo !== 'ventana' || !['blanca', 'negra', 'balcon'].includes(String(valor))) return v;
+    const w = v as VanoConEstilo, antes = w.estiloVentana;
+    const nuevo: VanoConEstilo = { ...w, estiloVentana: valor as EstiloVentana };
+    if (antes === 'balcon' && valor !== 'balcon') nuevo.alto_antepecho = VENTANA.antepechoDef;   // deja de ir desde el piso
+    return ajustarVentana(nuevo, altoMuro);
   }
   return v;
+}
+
+/**
+ * Rangos de una ventana en un muro de `altoMuro`: alto 0,3–2,4 m; antepecho ≥ 0,25 m y 0,15 m libres bajo
+ * el techo; el balcón va desde el piso. La pantalla los usa para sus controles: la regla vive solo aquí.
+ */
+export function rangosVentana(v: Pick<VanoConEstilo, 'estiloVentana' | 'alto'>, altoMuro: number) {
+  const balcon = v.estiloVentana === 'balcon';
+  const techo = altoMuro - VENTANA.holguraTecho;
+  const alto = { min: VENTANA.altoMin, max: Math.min(VENTANA.altoMax, balcon ? techo : techo - VENTANA.antepechoMin) };
+  const altoActual = Math.max(alto.min, Math.min(alto.max, v.alto ?? VENTANA.altoDef));
+  const antepecho = balcon ? { min: 0, max: 0 } : { min: VENTANA.antepechoMin, max: Math.max(VENTANA.antepechoMin, techo - altoActual) };
+  return { alto, antepecho };
+}
+
+/** Lleva la ventana a sus rangos (ver rangosVentana). */
+function ajustarVentana(v: VanoConEstilo, altoMuro: number): VanoConEstilo {
+  const r = rangosVentana(v, altoMuro);
+  const alto = Math.max(r.alto.min, Math.min(r.alto.max, v.alto ?? VENTANA.altoDef));
+  const alto_antepecho = Math.max(r.antepecho.min, Math.min(r.antepecho.max, v.alto_antepecho ?? VENTANA.antepechoDef));
+  return { ...v, alto, alto_antepecho };
+}
+
+/** Línea del muro sobre la que está un vano (para no encimar aberturas, venga del lado que venga). */
+function lineaMuro(p: Planta, v: Pick<Vano, 'modulo_a' | 'lado'>): { horiz: boolean; coord: number } | null {
+  const m = p.modulos.find(x => String(x.id) === String(v.modulo_a));
+  if (!m) return null;
+  if (v.lado === 'norte') return { horiz: true, coord: m.z };
+  if (v.lado === 'sur') return { horiz: true, coord: m.z + m.largo };
+  if (v.lado === 'oeste') return { horiz: false, coord: m.x };
+  return { horiz: false, coord: m.x + m.ancho };
+}
+function seEncima(p: Planta, nuevo: Vano): boolean {
+  const L = lineaMuro(p, nuevo);
+  if (!L) return false;
+  const nivelN = nuevo.nivel ?? 0;
+  return p.vanos.some(v => {
+    const M = lineaMuro(p, v);
+    if (!M || M.horiz !== L.horiz || Math.abs(M.coord - L.coord) > TOL_CONTACTO) return false;
+    const nivelV = v.nivel ?? nivelDe(p.modulos.find(x => String(x.id) === String(v.modulo_a)) ?? {});
+    if (nivelV !== nivelN) return false;
+    return Math.min(v.centro + v.ancho / 2, nuevo.centro + nuevo.ancho / 2) - Math.max(v.centro - v.ancho / 2, nuevo.centro - nuevo.ancho / 2) > 1e-6;
+  });
+}
+
+/**
+ * Puerta o ventana en el muro más cercano al punto tocado (visor3d.js:7150-7181, ponerPuertaLibre).
+ * Si el muro es compartido, el vano queda en el contacto y lo reabre si estaba cerrado; si no, da hacia afuera.
+ * No se crea si se encima con otra abertura del mismo tramo.
+ */
+function colocarVanoLibre(e: EditorPlanta, a: { x: number; z: number; tolerancia?: number }, tipo: 'puerta' | 'ventana', estilo: EstiloVentana = 'blanca'): EditorPlanta {
+  const p = e.planta;
+  const TOL = a.tolerancia ?? TOL_PUERTA_LIBRE;
+  let mejor: { lado: Lado; d: number; u: number; ini: number; fin: number; m: Modulo } | null = null;
+  for (const m of p.modulos.filter(x => esCuarto(x.tipo) && nivelDe(x) === e.nivelActivo)) {
+    const x0 = m.x, x1 = m.x + m.ancho, z0 = m.z, z1 = m.z + m.largo;
+    const lados = [
+      { lado: 'norte' as Lado, d: Math.abs(a.z - z0), dentro: a.x >= x0 && a.x <= x1, u: a.x, ini: x0, fin: x1 },
+      { lado: 'sur' as Lado,   d: Math.abs(a.z - z1), dentro: a.x >= x0 && a.x <= x1, u: a.x, ini: x0, fin: x1 },
+      { lado: 'oeste' as Lado, d: Math.abs(a.x - x0), dentro: a.z >= z0 && a.z <= z1, u: a.z, ini: z0, fin: z1 },
+      { lado: 'este' as Lado,  d: Math.abs(a.x - x1), dentro: a.z >= z0 && a.z <= z1, u: a.z, ini: z0, fin: z1 },
+    ];
+    for (const l of lados) if (l.dentro && l.d <= TOL && (!mejor || l.d < mejor.d)) mejor = { ...l, m };
+  }
+  if (!mejor) return { ...e, mensaje: 'Toca justo sobre el borde de un cuarto' };
+  const largoMuro = mejor.fin - mejor.ini;
+  const base = tipo === 'puerta' ? ANCHO_VANO_DEF : estilo === 'balcon' ? VENTANA.anchoBalcon : VENTANA.anchoDef;
+  const ancho = Math.min(base, Math.max(tipo === 'puerta' ? 0.6 : 0.4, largoMuro - 0.2));
+  const centro = Math.max(mejor.ini + ancho / 2 + 0.05, Math.min(mejor.fin - ancho / 2 - 0.05, mejor.u));
+  const mid = String(mejor.m.id);
+  const c = contactosPlanta(p).find(k => k.modulo_a === mid && k.lado === mejor!.lado && !k.exterior && centro >= k.ini && centro <= k.fin);
+  const { id, contador } = nuevoId(e, 'v');
+  const comun = { id, modulo_a: mid, modulo_b: c ? c.modulo_b : null, lado: mejor.lado, nivel: nivelDe(mejor.m), centro, ancho,
+    limIni: c ? c.ini : mejor.ini, limFin: c ? c.fin : mejor.fin, libre: !c };
+  const nuevo: Vano = tipo === 'puerta'
+    ? { ...comun, tipo: 'puerta', alto: ALTO_VANO_DEF, bisagra: 'izq', sentido: 'dentro', anguloApertura: 75, abierta: true }
+    : ajustarVentana({ ...comun, tipo: 'ventana', estiloVentana: estilo,
+        alto: estilo === 'balcon' ? VENTANA.altoBalcon : VENTANA.altoDef, alto_antepecho: estilo === 'balcon' ? 0 : VENTANA.antepechoDef },
+        mejor.m.alto ?? ALTO_MODULO_DEF);
+  if (seEncima(p, nuevo)) return { ...e, mensaje: 'Ya hay una abertura en ese tramo del muro' };
+  const murosCerrados = c ? p.murosCerrados.filter(k => k !== claveMuro(nuevo)) : p.murosCerrados;
+  return { ...e, contador, seleccion: { tipo: 'vano', id }, planta: { ...p, vanos: [...p.vanos, nuevo], murosCerrados } };
 }
 
 /** Rango del muro de un lado de un módulo (para vanos sin límites, p. ej. de planos de la IA). */
@@ -563,32 +671,21 @@ function aplicar(e: EditorPlanta, a: AccionEditor): EditorPlanta {
       return { ...e, contador, seleccion: { tipo: 'vano', id },
         planta: { ...p, vanos: [...p.vanos, nuevo], murosCerrados: p.murosCerrados.filter(k => k !== claveMuro(c)) } };
     }
-    case 'ponerPuertaLibre': {   // visor3d.js:7150-7181
-      const TOL = a.tolerancia ?? TOL_PUERTA_LIBRE;
-      let mejor: { lado: Lado; d: number; u: number; ini: number; fin: number; m: Modulo } | null = null;
-      for (const m of p.modulos.filter(x => esCuarto(x.tipo) && nivelDe(x) === e.nivelActivo)) {
-        const x0 = m.x, x1 = m.x + m.ancho, z0 = m.z, z1 = m.z + m.largo;
-        const lados = [
-          { lado: 'norte' as Lado, d: Math.abs(a.z - z0), dentro: a.x >= x0 && a.x <= x1, u: a.x, ini: x0, fin: x1 },
-          { lado: 'sur' as Lado,   d: Math.abs(a.z - z1), dentro: a.x >= x0 && a.x <= x1, u: a.x, ini: x0, fin: x1 },
-          { lado: 'oeste' as Lado, d: Math.abs(a.x - x0), dentro: a.z >= z0 && a.z <= z1, u: a.z, ini: z0, fin: z1 },
-          { lado: 'este' as Lado,  d: Math.abs(a.x - x1), dentro: a.z >= z0 && a.z <= z1, u: a.z, ini: z0, fin: z1 },
-        ];
-        for (const l of lados) if (l.dentro && l.d <= TOL && (!mejor || l.d < mejor.d)) mejor = { ...l, m };
-      }
-      if (!mejor) return { ...e, mensaje: 'Toca justo sobre el borde de un cuarto' };
-      const largoMuro = mejor.fin - mejor.ini;
-      const ancho = Math.min(ANCHO_VANO_DEF, Math.max(0.6, largoMuro - 0.2));
-      const centro = Math.max(mejor.ini + ancho / 2 + 0.05, Math.min(mejor.fin - ancho / 2 - 0.05, mejor.u));
-      const mid = String(mejor.m.id);
-      const c = contactosPlanta(p).find(k => k.modulo_a === mid && k.lado === mejor!.lado && !k.exterior && centro >= k.ini && centro <= k.fin);
-      const { id, contador } = nuevoId(e, 'v');
-      const nuevo: Vano = {
-        id, modulo_a: mid, modulo_b: c ? c.modulo_b : null, lado: mejor.lado, nivel: nivelDe(mejor.m),
-        centro, ancho, tipo: 'puerta', alto: ALTO_VANO_DEF, bisagra: 'izq', sentido: 'dentro', anguloApertura: 75, abierta: true,
-        limIni: c ? c.ini : mejor.ini, limFin: c ? c.fin : mejor.fin, libre: !c,
-      };
-      return { ...e, contador, seleccion: { tipo: 'vano', id }, planta: { ...p, vanos: [...p.vanos, nuevo] } };
+    case 'ponerPuertaLibre':   // visor3d.js:7150-7181
+      return colocarVanoLibre(e, a, 'puerta');
+    case 'ponerVentanaLibre':
+      return colocarVanoLibre(e, a, 'ventana', a.estilo ?? 'blanca');
+    case 'cerrarMuro': {   // "−": aquí no debe haber paso; convertir ya respeta murosCerrados
+      const k = claveMuro(a.contacto);
+      if (p.vanos.some(v => claveMuro(v) === k)) return { ...e, mensaje: 'Ese muro tiene un paso: bórralo para cerrarlo' };
+      if (p.murosCerrados.includes(k)) return e;
+      return { ...e, mensaje: 'Muro cerrado: no tendrá paso al generar el 3D', planta: { ...p, murosCerrados: [...p.murosCerrados, k] } };
+    }
+    case 'abrirMuro': {    // vuelve al comportamiento automático (puede recibir un arco al generar)
+      const k = claveMuro(a.contacto);
+      if (!p.murosCerrados.includes(k)) return e;
+      return { ...e, mensaje: 'Muro sin decidir: al generar el 3D puede recibir un arco automático',
+        planta: { ...p, murosCerrados: p.murosCerrados.filter(x => x !== k) } };
     }
     case 'moverVano':   // visor3d.js:7203-7211: solo a lo largo de su pared, dentro de su tramo; sin cuadrícula
       return conVano(e, a.id, v => {
@@ -601,8 +698,10 @@ function aplicar(e: EditorPlanta, a: AccionEditor): EditorPlanta {
         const mitad = v.ancho / 2;
         return { ...v, centro: Math.max(limIni + mitad, Math.min(limFin - mitad, a.u)) };
       });
-    case 'actualizarVano':
-      return conVano(e, a.id, v => actualizarVano(v, a.campo, a.valor));
+    case 'actualizarVano': {
+      const m = p.modulos.find(x => String(x.id) === String(p.vanos.find(v => String(v.id) === a.id)?.modulo_a));
+      return conVano(e, a.id, v => actualizarVano(v, a.campo, a.valor, m?.alto ?? ALTO_MODULO_DEF));
+    }
     case 'duplicarVano': {   // visor3d.js:7263-7272
       const v = p.vanos.find(x => String(x.id) === a.id);
       if (!v) return { ...e, mensaje: 'Ese vano no existe' };

@@ -20,7 +20,7 @@ import LienzoPlanta from './LienzoPlanta';
 import {
   PASO_ZOOM, Vista, encuadrar, ladoZoom, metros, modulosDelNivel, nombreVisible, puedeAcercar, puedeAlejar, resumen, textoMedidas, zoomVista,
 } from './vistaLienzo';
-import { CONSTRUCCION, Contexto, ESPACIOS, Gesto, Pieza, iniciar, mismaVista, mover, notaConstruccion, posicionAsa, puedeEstirar, terminar } from './gestosLienzo';
+import { ABERTURAS, CONSTRUCCION, Contexto, ESPACIOS, Gesto, Pieza, iniciar, mismaVista, mover, notaConstruccion, posicionAsa, puedeEstirar, terminar } from './gestosLienzo';
 import { T } from './paleta';
 import { vanosQueSeQuitarian } from './vanosLienzo';
 import PanelVano from './PanelVano';
@@ -241,7 +241,9 @@ export default function EditorPlanoScreen(p: Props) {
         )}
         {colocar && (
           <View style={s.modoColocar}>
-            <Text style={s.modoColocarTexto} numberOfLines={2}>Toca el plano donde quieres {colocar.etiqueta}</Text>
+            <Text style={s.modoColocarTexto} numberOfLines={2}>
+              {colocar.vano ? `Toca el muro donde quieres la ${colocar.etiqueta}` : `Toca el plano donde quieres ${colocar.etiqueta}`}
+            </Text>
             <Pressable style={s.cancelar} onPress={() => setColocar(null)} hitSlop={6}>
               <Text style={s.cancelarTexto}>Cancelar</Text>
             </Pressable>
@@ -290,6 +292,7 @@ export default function EditorPlanoScreen(p: Props) {
         const donde = b ? `entre ${nombreDe(vanoSel.modulo_a) ?? 'un espacio'} y ${b}` : `en ${nombreDe(vanoSel.modulo_a) ?? 'un espacio'}, hacia afuera`;
         return (
           <PanelVano vano={vanoSel} donde={donde} huerfano={huerfanos.has(String(vanoSel.id))} despachar={despachar}
+            altoMuro={editor.planta.modulos.find(x => String(x.id) === String(vanoSel.modulo_a))?.alto ?? 2.6}
             expandido={ajustesVano} onExpandir={setAjustesVano} />
         );
       })()}
@@ -320,10 +323,10 @@ export default function EditorPlanoScreen(p: Props) {
         <>
           <Pressable style={StyleSheet.absoluteFill} onPress={() => setListaObras(false)} accessibilityLabel="Cerrar construcción" />
           <ScrollView style={[s.lista, s.listaObras, { top: m.arriba + 108 }]} contentContainerStyle={{ gap: 8 }}>
-            {['Muros', 'Estructura', 'Exteriores'].map(g => (
+            {['Aberturas', 'Muros', 'Estructura', 'Exteriores'].map(g => (
               <View key={g} style={{ gap: 8 }}>
                 <Text style={s.grupo}>{g.toUpperCase()}</Text>
-                {CONSTRUCCION.filter(c => c.grupo === g).map(c => (
+                {[...ABERTURAS, ...CONSTRUCCION].filter(c => c.grupo === g).map(c => (
                   <Pressable key={c.tipo} style={({ pressed }) => [s.obra, pressed && s.pulsado]} onPress={() => elegirEspacio(c)} accessibilityRole="button">
                     <Text style={s.piezaTexto}>{c.etiqueta}</Text>
                     <Text style={[s.estado3D, c.estado3D === 'si' ? s.si3D : c.estado3D === 'parcial' ? s.parcial3D : s.no3D]}>{c.nota3D}</Text>
