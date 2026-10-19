@@ -18,6 +18,9 @@ import Escena3D from './Escena3D';
 import type { Mueble } from '../plan/planEditor';
 import { conAproximaciones, objetosEnEscena } from '../objetos/objetos3d';
 import { CATALOGO_OBJETOS } from '../objetos/catalogoObjetos';
+import { AMBIENTES, Ambiente, INTENSIDAD_DEF, INTENSIDAD_MAX, INTENSIDAD_MIN, lucesEscena } from './luces3d';
+import { Deslizador } from '../editor2d/Deslizador';
+import { cuantizar } from '../editor2d/ajustesVano';
 
 const C = { fondo: '#0D1018', panel: '#161A25', boton: '#222838', texto: '#E8EBF3', suave: '#98A1B7', acento: '#7357F0' };
 const COLOR_FIDELIDAD = { compatible: '#86EFAC', parcial: '#FCD34D', 'no-representado': '#FCA5A5', pendiente: '#98A1B7' } as const;
@@ -63,6 +66,9 @@ export default function Vista3DScreen({ plano, resumen, onVolver, onVerAR, muebl
       : avisos(maqueta, plano);
   }, [maqueta, plano, muebles]);
   const [verObjetos, setVerObjetos] = useState(false);
+  const [verLuz, setVerLuz] = useState(false);
+  const [ambiente, setAmbiente] = useState<Ambiente>('dia');
+  const [intensidad, setIntensidad] = useState(INTENSIDAD_DEF);
 
   const [vista, setVista] = useState<Vista>('isometrica');
   const [mirada, setMirada] = useState<Mirada>(() => miradaDe('isometrica')!);
@@ -95,7 +101,9 @@ export default function Vista3DScreen({ plano, resumen, onVolver, onVerAR, muebl
 
   const cajas = useMemo(() => visibles(maqueta, plano, hasta), [maqueta, plano, hasta]);
   const objetos = useMemo(() => objetosEnEscena(muebles, plano, 1, hasta), [muebles, plano, hasta]);
-  const appProps = useMemo(() => ({ cajas, objetos, transformacion: transformacion(enc, mirada) }), [cajas, objetos, enc, mirada]);
+  const luces = useMemo(() => lucesEscena(ambiente, intensidad, plano, maqueta.extension, muebles, hasta), [ambiente, intensidad, plano, maqueta, muebles, hasta]);
+  const appProps = useMemo(() => ({ cajas, objetos, luces, transformacion: transformacion(enc, mirada) }), [cajas, objetos, luces, enc, mirada]);
+  const listaConLuz = luces.apagadas ? [...lista, { fidelidad: 'parcial' as const, texto: `Hay ${luces.apagadas} luminaria(s) más que no iluminan: se encienden como máximo 4 a la vez.` }] : lista;
 
   if (sinContenido(maqueta)) {
     return (
@@ -114,10 +122,33 @@ export default function Vista3DScreen({ plano, resumen, onVolver, onVerAR, muebl
         <Text style={s.tituloBarra}>Vista 3D</Text>
         <Pressable style={s.botonAcento} onPress={onVerAR} accessibilityRole="button"><Text style={s.botonAcentoTexto}>Ver en AR</Text></Pressable>
       </View>
-      {onAgregarObjeto && (
-        <Pressable style={[s.boton, s.objetosBoton]} onPress={() => setVerObjetos(v => !v)} accessibilityRole="button">
-          <Text style={s.botonTexto}>Objetos ({(muebles ?? []).length}) {verObjetos ? '▴' : '▾'}</Text>
+      <View style={s.filaHerramientas}>
+        {onAgregarObjeto && (
+          <Pressable style={[s.boton, s.flex1]} onPress={() => { setVerLuz(false); setVerObjetos(v => !v); }} accessibilityRole="button">
+            <Text style={s.botonTexto}>Objetos ({(muebles ?? []).length}) {verObjetos ? '▴' : '▾'}</Text>
+          </Pressable>
+        )}
+        <Pressable style={[s.boton, s.flex1]} onPress={() => { setVerObjetos(false); setVerLuz(v => !v); }} accessibilityRole="button">
+          <Text style={s.botonTexto}>Luz: {AMBIENTES.find(a => a.valor === ambiente)!.etiqueta} {Math.round(intensidad * 100)} % {verLuz ? '▴' : '▾'}</Text>
         </Pressable>
+      </View>
+      {verLuz && (
+        <View style={s.panelLuz}>
+          <View style={s.filaHerramientas}>
+            {AMBIENTES.map(a => (
+              <Pressable key={a.valor} style={[s.vistaBoton, ambiente === a.valor && s.vistaActiva]} onPress={() => setAmbiente(a.valor)}
+                accessibilityRole="button" accessibilityState={{ selected: ambiente === a.valor }}>
+                <Text style={s.botonTexto}>{a.etiqueta}</Text>
+              </Pressable>
+            ))}
+          </View>
+          <Text style={s.nota}>Intensidad: {Math.round(intensidad * 100)} %</Text>
+          <View style={s.margen}>
+            <Deslizador valor={intensidad} min={INTENSIDAD_MIN} max={INTENSIDAD_MAX} color="#FCD34D" etiqueta="Intensidad de la luz" pasoAccesible={0.05}
+              cuantizar={x => cuantizar(x, 0.05, INTENSIDAD_MIN, INTENSIDAD_MAX)} onCambio={setIntensidad} />
+          </View>
+          <Text style={s.nota}>Las lámparas de pie y las luces de techo colocadas iluminan su alrededor.</Text>
+        </View>
       )}
       {verObjetos && onAgregarObjeto && (
         <ScrollView style={{ maxHeight: Math.round(height * 0.32) }} contentContainerStyle={s.listaObjetos}>
@@ -174,12 +205,12 @@ export default function Vista3DScreen({ plano, resumen, onVolver, onVerAR, muebl
       </View>
 
       <Pressable style={s.avisosBarra} onPress={() => setVerAvisos(v => !v)} accessibilityRole="button">
-        <Text style={s.botonTexto}>Qué se ve y qué no ({lista.length}) {verAvisos ? '▾' : '▴'}</Text>
+        <Text style={s.botonTexto}>Qué se ve y qué no ({listaConLuz.length}) {verAvisos ? '▾' : '▴'}</Text>
         <Text style={s.nota}>Gira con un dedo{vista !== 'libre' ? ' (pasa a Libre)' : ''}</Text>
       </Pressable>
       {verAvisos && (
         <ScrollView style={{ maxHeight: Math.round(height * 0.3) }} contentContainerStyle={s.avisos}>
-          {lista.length ? lista.map((a, i) => (
+          {listaConLuz.length ? listaConLuz.map((a, i) => (
             <View key={i} style={s.aviso}>
               <Text style={[s.etiqueta, { color: COLOR_FIDELIDAD[a.fidelidad] }]}>{ETIQUETA_FIDELIDAD[a.fidelidad]}</Text>
               <Text style={s.avisoTexto}>{a.texto}</Text>
@@ -204,7 +235,10 @@ const s = StyleSheet.create({
   botonAcento: { minHeight: 44, paddingHorizontal: 16, borderRadius: 12, backgroundColor: C.acento, justifyContent: 'center' },
   botonAcentoTexto: { color: '#FFFFFF', fontSize: 15, fontWeight: '700' },
   vistas: { flexDirection: 'row', gap: 8, paddingHorizontal: 14, paddingBottom: 10 },
-  objetosBoton: { marginHorizontal: 14, marginBottom: 10, alignItems: 'center' },
+  filaHerramientas: { flexDirection: 'row', gap: 8, paddingHorizontal: 14, paddingBottom: 10 },
+  flex1: { flex: 1, alignItems: 'center' },
+  panelLuz: { paddingBottom: 6, gap: 6 },
+  margen: { paddingHorizontal: 14 },
   listaObjetos: { paddingHorizontal: 14, paddingBottom: 10, gap: 6 },
   objetoFila: { minHeight: 44, borderRadius: 12, backgroundColor: C.boton, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 14 },
   mas: { color: C.texto, fontSize: 22, fontWeight: '600' },

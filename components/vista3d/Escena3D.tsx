@@ -11,7 +11,8 @@
  * objetos3d.objetosEnEscena, en el MISMO sistema que las cajas de la maqueta).
  */
 import React from 'react';
-import { ViroAmbientLight, ViroBox, ViroDirectionalLight, ViroMaterials, ViroNode, ViroScene, ViroSphere } from '@reactvision/react-viro';
+import { ViroAmbientLight, ViroBox, ViroDirectionalLight, ViroMaterials, ViroNode, ViroOmniLight, ViroScene, ViroSphere } from '@reactvision/react-viro';
+import type { Luces } from './luces3d';
 import type { PiezaMundo } from '../objetos/catalogoObjetos';
 import type { Caja } from '../plan/planGeometry';
 import type { transformacion } from './camara3d';
@@ -40,16 +41,24 @@ export default function Escena3D(props: any) {
   const p = props?.sceneNavigator?.viroAppProps ?? {};
   const cajas: Caja[] = p.cajas ?? [];
   const objetos: PiezaMundo[] = p.objetos ?? [];
+  const luces: Luces | undefined = p.luces;
   const t: ReturnType<typeof transformacion> | undefined = p.transformacion;
   if (!t) return <ViroScene />;
   return (
     <ViroScene>
-      <ViroAmbientLight color="#FFFFFF" intensity={420} />
-      <ViroDirectionalLight color="#FFFFFF" direction={[-0.4, -1, -0.6]} intensity={650} />
+      {/* Luces de ambiente y del sol (3c: las de la web, ver luces3d.ts). Sin `luces`, las de siempre. */}
+      {luces ? luces.ambientes.map((l, i) => <ViroAmbientLight key={`a${i}`} color={l.color} intensity={l.intensidad} />)
+        : <ViroAmbientLight color="#FFFFFF" intensity={420} />}
+      {luces ? luces.direccionales.map((l, i) => <ViroDirectionalLight key={`d${i}`} color={l.color} intensity={l.intensidad} direction={l.direccion} />)
+        : <ViroDirectionalLight color="#FFFFFF" direction={[-0.4, -1, -0.6]} intensity={650} />}
       <ViroNode position={t.alejar}>
         <ViroNode rotation={t.inclinar}>
           <ViroNode rotation={t.girar}>
             <ViroNode position={t.centrar}>
+              {/* Luces puntuales (de techo y de las lámparas): giran con la maqueta, en su sitio */}
+              {luces?.puntuales.map((l, i) => (
+                <ViroOmniLight key={`p${i}`} position={l.pos} color={l.color} intensity={l.intensidad} attenuationStartDistance={0.2} attenuationEndDistance={l.alcance} />
+              ))}
               {cajas.map(c => (
                 <ViroBox key={c.id} position={c.centro} width={c.tamano[0]} height={c.tamano[1]} length={c.tamano[2]} materials={[materialDe(c)]} />
               ))}
